@@ -176,7 +176,11 @@ def train(
     print(f"\n模型已就绪，可训练参数总量: {count_parameters(model):,}")
 
     criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
-    optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+    # 替换前：
+    # optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+
+    # 替换后：
+    optimizer = optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-4)
 
     # 动态学习率策略：连续 5 轮验证集损失不下降，则学习率减半
     scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5)
