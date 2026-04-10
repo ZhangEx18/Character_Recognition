@@ -1,154 +1,149 @@
 """
-实时摄像头预测脚本
-运行方式: python -m tools.camera_app
+实时摄像头预测脚本 (iPhone 连续互通摄像头优化版)
+运行方式: python -m tools.camera_app --net resnet
 
 功能：
-1. 吊起 Mac 前置摄像头
-2. 实时捕获 ROI (感兴趣区域) 并在屏幕绘制参考框
-3. 动态色彩反转与二值化处理 (适配现实世界的白纸黑字)
-4. 异步降频推理 (保证视频流丝滑不卡顿)
+1. 实时捕获中心红框区域 (ROI)
+2. 针对 iPhone 连续互通摄像头进行了【镜像与姿势矫正】
+3. 动态色彩反转与二值化处理 (适配白纸黑字)
+4. 异步降频推理，保证视频流在 Mac 上运行丝滑
 """
 
 import cv2
 import argparse
 from PIL import Image
 
-# 【核心修改 1】：从 src 导入大脑
+# 从项目核心包导入预测引擎
 from src import Predictor
 
 
-def run_camera_app(model_path: str):
+def run_camera_app(model_path: str, net_type: str):
     print("=" * 60)
-    print("🚀 正在加载神经网络大脑...")
+    print(f"🚀 正在加载 {net_type.upper()} 预测引擎...")
     print("=" * 60)
 
-    # 初始化预测器（内部会自动调度 MPS 苹果硅加速）
+    # 1. 初始化预测器 (根据参数加载对应的模型架构)
     try:
-       predictor = Predictor(model_path)
-    except FileNotFoundError:
-       print(f"找不到权重文件：{model_path}")
-       return
+        predictor = Predictor(model_path, net_type=net_type)
+    except Exception as e:
+        print(f"加载模型失败: {e}")
+        return
 
-    # 调用 Mac 默认摄像头 (索引通常为 0)
+    # 2. 开启摄像头 (iPhone 通常映射在索引 0)
     cap = cv2.VideoCapture(0)
 
     if not cap.isOpened():
-       print("无法打开摄像头！")
-       print("解决办法: 请前往 Mac 的 [系统设置] -> [隐私与安全性] -> [摄像头] 中授权终端/IDE访问。")
-       return
+        print("无法打开摄像头！")
+        return
 
     print("\n✅ 摄像头已开启！")
-    print("👉 请将写有字符的纸张对准屏幕中央的红框。")
+    print("👉 调整提示：确保屏幕上的按键字母是【正着】的，不是反向的。")
     print("🛑 按下键盘上的 'q' 键退出程序。")
 
-    # 状态缓存变量（用于降频推理）
+    # 状态缓存与降频配置
     frame_counter = 0
-    process_every_n_frames = 5  # 每 5 帧推理一次，剩下的时间显示缓存结果，防止画面掉帧
-    current_text = "Wait..."
-    current_color = (0, 255, 255)  # 黄色
+    process_every_n_frames = 5  # 每 5 帧进行一次 AI 推理
+    current_text = "Scanning..."
+    current_color = (0, 255, 255)
 
     while True:
-       ret, frame = cap.read()
-       if not ret:
-          print("摄像头画面流中断。")
-          break
+        # 修正：只读取一次，解决掉帧问题
+        ret, frame = cap.read()
+        if not ret:
+            break
 
-       # Mac 的摄像头很多时候默认是镜像的，需要水平翻转一下，否则拿在手里的字是反的
-       ret, frame = cap.read()
+        # ============================================================
+        # 【镜像与姿势矫正区】
+        # 根据您的反馈：“上下对，左右反”，默认开启水平翻转
+        # ============================================================
 
-       # ✅ 关键：旋转成“竖屏逻辑”
-       frame = cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
+        # 修复左右反向：执行水平镜像翻转 (绕 Y 轴)
+        frame = cv2.flip(frame, 1)
 
-       # ❌ 先不要镜像
-       # frame = cv2.flip(frame, 1)
+        # 如果您的 iPhone 是竖屏放置导致画面偏转，请取消下面对应行的注释：
+        # frame = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
+        # frame = cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
 
-       # 1. 计算中心准星框的坐标
-       height, width, _ = frame.shape
-       box_size = 250  # 框的大小
-       x1 = (width - box_size) // 2
-       y1 = (height - box_size) // 2
-       x2 = x1 + box_size
-       y2 = y1 + box_size
+        # ============================================================
 
-       # 画出红色的 ROI 区域框
-       cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 255), 2)
+        # 1. 计算中心准星框坐标
+        h, w, _ = frame.shape
+        box_size = 250
+        x1, y1 = (w - box_size) // 2, (h - box_size) // 2
+        x2, y2 = x1 + box_size, y1 + box_size
 
-       # 2. 截取框内的图像
-       roi = frame[y1:y2, x1:x2]
+        # 绘制红色 ROI 引导框
+        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 255), 2)
 
-       frame_counter += 1
+        # 2. 推理逻辑
+        frame_counter += 1
+        if frame_counter % process_every_n_frames == 0:
+            # 截取框内图像
+            roi = frame[y1:y2, x1:x2]
 
-       # 3. 降频推理逻辑：只在特定的帧数进行神经网络计算
-       if frame_counter % process_every_n_frames == 0:
-          # 【图像处理核心步骤】
-          # A. 转为灰度图
-          roi_gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+            # A. 图像预处理：灰度化 -> 二值化反色 (将白纸黑字转为黑底白字)
+            roi_gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+            _, roi_thresh = cv2.threshold(roi_gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
 
-          # B. 二值化与反色 (极其关键)
-          # 现实中是"白纸黑字"，但神经网络通常喜欢"黑底白字"。
-          # THRESH_BINARY_INV 会将低于阈值（黑色笔迹）的变成白色，高于阈值（白纸）的变成黑色。
-          # 这里使用 Otsu 自动阈值算法，适应不同的室内光线。
-          _, roi_thresh = cv2.threshold(roi_gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+            # B. 格式转换：Numpy 转 PIL 再转 Tensor
+            pil_img = Image.fromarray(roi_thresh).convert('L')
+            tensor_img = predictor.transform(pil_img)
 
-          # C. 将 OpenCV 图像格式 (Numpy) 转为 PyTorch 友好的 PIL 格式
-          pil_img = Image.fromarray(roi_thresh).convert('L')
+            try:
+                # C. 执行预测
+                res = predictor.predict(tensor_img)
+                char = res['class_name']
+                conf = res['confidence']
 
-          try:
-             # 调用 predictor 初始化好的 transform 管道进行缩放和归一化
-             tensor_img = predictor.transform(pil_img)
+                # D. 动态设置颜色 (置信度越高越绿)
+                if conf > 0.8:
+                    current_color = (0, 255, 0)  # 绿色
+                elif conf > 0.5:
+                    current_color = (0, 255, 255)  # 黄色
+                else:
+                    current_color = (0, 0, 255)  # 红色
 
-             # 增加 batch 维度: (1, 64, 64) -> (1, 1, 64, 64)
-             tensor_img = tensor_img.unsqueeze(0)
+                current_text = f"Char: {char} ({conf:.1%})"
+            except Exception as e:
+                print(f"推理引擎异常: {e}")
 
-             # 执行预测
-             result = predictor.predict(tensor_img)
+        # 3. 渲染预测结果
+        cv2.putText(frame, current_text, (x1, y1 - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0,0,0), 4)
+        cv2.putText(frame, current_text, (x1, y1 - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.9, current_color, 2)
 
-             char = result['class_name']
-             conf = result['confidence']
+        # 4. 显示画面
+        cv2.imshow('CNN Character Recognition', frame)
 
-             # 根据置信度改变字体颜色 (绿>80% > 黄>50% > 红)
-             if conf > 0.8:
-                current_color = (0, 255, 0)  # 绿
-             elif conf > 0.5:
-                current_color = (0, 255, 255)  # 黄
-             else:
-                current_color = (0, 0, 255)  # 红
+        # 监听键盘
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
 
-             current_text = f"Char: {char} ({conf:.1%})"
-
-          except Exception as e:
-             print(f"推理异常: {e}")
-
-       # 4. 将预测结果渲染在屏幕上（不管当前帧有没有进行推理，都把结果画上去）
-       # 文字带个黑色描边，防止在白纸背景下看不清
-       cv2.putText(frame, current_text, (x1, y1 - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 0), 4)
-       cv2.putText(frame, current_text, (x1, y1 - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.9, current_color, 2)
-
-       # 5. 实时显示画面
-       cv2.imshow('Mac Camera - AI Character Recognition', frame)
-
-       # 6. 监听键盘事件，按 'q' 退出
-       if cv2.waitKey(1) & 0xFF == ord('q'):
-          break
-
-    # 释放资源
+    # 资源释放
     cap.release()
     cv2.destroyAllWindows()
-    # 针对 macOS 的小修复：有时窗口关不掉，多调几次 waitKey 刷新事件队列
     for i in range(5):
-       cv2.waitKey(1)
+        cv2.waitKey(1)
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='启动摄像头进行实时字符识别')
+    parser = argparse.ArgumentParser(description='启动实时摄像头字符识别')
 
-    # 【核心修改 2】：默认路径改为相对于根目录
+    # 参数：权重路径
     parser.add_argument(
-       '--model', '-m',
-       type=str,
-       default='checkpoints/best_model.pth',
-       help='模型权重文件的路径'
+        '--model', '-m',
+        type=str,
+        default='checkpoints/best_model.pth',
+        help='模型权重物理路径'
+    )
+
+    # 参数：模型架构类型 (resnet / detailed / simple)
+    parser.add_argument(
+        '--net',
+        type=str,
+        default='detailed',
+        choices=['simple', 'detailed', 'resnet'],
+        help='必须与训练该权重时的模型类型一致'
     )
 
     args = parser.parse_args()
-    run_camera_app(args.model)
+    run_camera_app(args.model, args.net)

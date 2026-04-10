@@ -255,6 +255,78 @@ class DetailedCNN(nn.Module):
         return x
 
 
+class ResidualBlock(nn.Module):
+    """残差块：ResNet 的核心基本单元"""
+
+    def __init__(self, in_channels, out_channels, stride=1):
+        super(ResidualBlock, self).__init__()
+        # 主路：两次卷积
+        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=stride, padding=1, bias=False)
+        self.bn1 = nn.BatchNorm2d(out_channels)
+        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=False)
+        self.bn2 = nn.BatchNorm2d(out_channels)
+
+        # 旁路 (Shortcut)：如果尺寸或通道变了，旁路也要做相应的 1x1 卷积调整，否则无法相加
+        self.shortcut = nn.Sequential()
+        if stride != 1 or in_channels != out_channels:
+            self.shortcut = nn.Sequential(
+                nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=stride, bias=False),
+                nn.BatchNorm2d(out_channels)
+            )
+
+    def forward(self, x):
+        out = F.relu(self.bn1(self.conv1(x)))
+        out = self.bn2(self.conv2(out))
+        out += self.shortcut(x)  # 【核心】：主路结果加上旁路的原始特征！防止梯度消失
+        out = F.relu(out)
+        return out
+
+
+class ResNet(nn.Module):
+    """
+    轻量级残差网络 (针对 64x64 灰度图优化)
+    架构：初始卷积 -> 4个阶段的残差块 (逐步降维) -> 全局池化 -> 全连接层
+    """
+
+    def __init__(self, num_classes=62):
+        super(ResNet, self).__init__()
+        self.in_channels = 32
+
+        # 初始特征提取：1通道灰度图 -> 32通道，尺寸保持 64x64
+        self.conv1 = nn.Conv2d(1, 32, kernel_size=3, stride=1, padding=1, bias=False)
+        self.bn1 = nn.BatchNorm2d(32)
+
+        # 残差阶段
+        self.layer1 = self._make_layer(32, num_blocks=2, stride=1)  # 输出尺寸: 64x64
+        self.layer2 = self._make_layer(64, num_blocks=2, stride=2)  # 输出尺寸: 32x32
+        self.layer3 = self._make_layer(128, num_blocks=2, stride=2)  # 输出尺寸: 16x16
+        self.layer4 = self._make_layer(256, num_blocks=2, stride=2)  # 输出尺寸: 8x8
+
+        # 自适应平均池化：无论上面输出多大，强行压缩成 4x4
+        self.avgpool = nn.AdaptiveAvgPool2d((4, 4))
+
+        # 最终分类头
+        self.fc = nn.Linear(256 * 4 * 4, num_classes)
+
+    def _make_layer(self, out_channels, num_blocks, stride):
+        strides = [stride] + [1] * (num_blocks - 1)
+        layers = []
+        for s in strides:
+            layers.append(ResidualBlock(self.in_channels, out_channels, s))
+            self.in_channels = out_channels
+        return nn.Sequential(*layers)
+
+    def forward(self, x):
+        out = F.relu(self.bn1(self.conv1(x)))
+        out = self.layer1(out)
+        out = self.layer2(out)
+        out = self.layer3(out)
+        out = self.layer4(out)
+        out = self.avgpool(out)
+        out = out.view(out.size(0), -1)
+        out = self.fc(out)
+        return out
+
 def count_parameters(model: nn.Module) -> int:
     """计算模型中需要梯度更新的可训练参数总数"""
     # 遍历模型的所有参数，如果 requires_grad 为 True（即参与训练更新），则累加其元素个数（numel）

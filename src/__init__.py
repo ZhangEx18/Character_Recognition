@@ -13,14 +13,15 @@ __version__ = "1.0.0"
 # ==========================================
 
 # 1. 模型架构类
-from .model import DetailedCNN, SimpleCNN, count_parameters
+from .model import DetailedCNN, SimpleCNN, ResNet, count_parameters
 
-# 2. 数据处理与映射类
+# 2. 数据处理与映射类 (在这里加上 NUM_CLASSES)
 from .dataset import (
     create_dataloaders,
     CharacterDataset,
     CLASS_IDX_TO_NAME,
-    CLASS_NAME_TO_IDX
+    CLASS_NAME_TO_IDX,
+    NUM_CLASSES
 )
 
 # 3. 推理引擎类
@@ -37,11 +38,13 @@ from .utils import get_device
 __all__ = [
     "DetailedCNN",
     "SimpleCNN",
+    "ResNet",
     "count_parameters",
     "create_dataloaders",
     "CharacterDataset",
     "CLASS_IDX_TO_NAME",
     "CLASS_NAME_TO_IDX",
+    "NUM_CLASSES",  # 在白名单中也加上它
     "Predictor",
     "get_device",
 ]
