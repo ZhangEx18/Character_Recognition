@@ -100,43 +100,60 @@ class SimpleCNN(nn.Module):
 
         # ----- 第一个卷积层 -----
         # 输入: 1个通道(灰度图)。输出: 32个特征图。
-        # 尺寸变化: 64x64输入，padding=1保持尺寸，输出仍为 64x64
+        # in_channels=1: 因为输入是灰度图，只有一个颜色通道。
+        # out_channels=32: 我们使用 32 个不同的卷积核（过滤器）来提取 32 种不同的特征（例如：横向边缘、纵向边缘等）。
+        # kernel_size=3: 卷积核的大小是 3x3 的矩阵。这是一种非常常见且有效的尺寸。
+        # padding=1: 在图像四周各填充一圈像素（通常是0）。因为 3x3 卷积核在扫描时会使图像尺寸缩小 2，
+        # 为了保证卷积操作前后图像尺寸不变（仍为 64x64），需要加 padding。公式：(64 - 3 + 2*1)/1 + 1 = 64
         self.conv1 = nn.Conv2d(1, 32, kernel_size=3, padding=1)
 
         # ----- 第二个卷积层 -----
         # 接收 conv1 经过池化后的特征图(32通道)。输出: 64个高级特征图。
+        # in_channels=32: 必须与上一层的输出通道数匹配。
+        # out_channels=64: 网络越深，我们希望提取的特征越抽象、数量越多。
         self.conv2 = nn.Conv2d(32, 64, kernel_size=3, padding=1)
 
         # ----- 池化层 -----
         # 2x2最大池化，每次经过都会让特征图的长宽减半
+        # kernel_size=2, stride=2: 表示在 2x2 的窗口内取最大值，并且每次滑动 2 个像素（不重叠）。
+        # 这会将 64x64 的图像压缩成 32x32，大大减少计算量，同时保留最显著的特征（如边缘）。
         self.pool = nn.MaxPool2d(2, 2)
 
         # ----- 全连接层 -----
-        # 输入展平: 经过两次池化，64x64 -> 32x32 -> 16x16
-        # 通道数为64，因此总维度为 64 * 16 * 16 = 16384
-        self.fc1 = nn.Linear(64 * 16 * 16, 512)  # 第一层将 16384 维压缩至 512 维
-        self.fc2 = nn.Linear(512, num_classes)   # 输出层映射到具体类别数
+        # 输入展平: 经过两次池化，长宽变化为：64x64 -> (一次池化) -> 32x32 -> (二次池化) -> 16x16
+        # 因为在进入全连接层之前，我们需要把三维的特征图（通道数 x 高 x 宽）拉平成一维向量。
+        # 通道数为64，因此总维度（特征数量）为 64 * 16 * 16 = 16384。
+        # 这个数字必须算得非常精准，否则会报错。
+        self.fc1 = nn.Linear(64 * 16 * 16, 512)  # 第一层将 16384 维的特征压缩/映射到 512 维的隐层空间
+        self.fc2 = nn.Linear(512, num_classes)   # 输出层将 512 维的特征映射到最终的类别数（如 62 类），每个节点代表该类的得分
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """前向传播过程"""
+        """前向传播过程：定义了数据在网络中流动的具体路径"""
         # 第一阶段：特征提取
-        # [Batch, 1, 64, 64] -> Conv1 -> [Batch, 32, 64, 64]
-        # -> ReLU -> Pool -> [Batch, 32, 32, 32]
+        # 步骤 1: self.conv1(x) -> 进行第一次卷积，尺寸变为 [Batch, 32, 64, 64]
+        # 步骤 2: F.relu(...) -> 应用 ReLU 激活函数，将所有负数变为 0，引入非线性
+        # 步骤 3: self.pool(...) -> 进行最大池化，尺寸长宽减半，变为 [Batch, 32, 32, 32]
         x = self.pool(F.relu(self.conv1(x)))
 
-        # [Batch, 32, 32, 32] -> Conv2 -> [Batch, 64, 32, 32]
-        # -> ReLU -> Pool -> [Batch, 64, 16, 16]
+        # 同理，进行第二次特征提取
+        # 经过 conv2，通道数变为 64；经过 pool，尺寸再次减半。
+        # 最终输出尺寸：[Batch, 64, 16, 16]
         x = self.pool(F.relu(self.conv2(x)))
 
         # 第二阶段：空间展平
         # 将三维特征图 [Batch, 64, 16, 16] 展开为一维向量 [Batch, 16384]
+        # x.size(0) 是 batch_size（比如 128）。
+        # -1 告诉 PyTorch："除了 batch 维度，把剩下的所有维度乘起来拼成一维"。
         x = x.view(x.size(0), -1)
 
         # 第三阶段：分类识别
-        # [Batch, 16384] -> FC1 -> ReLU -> [Batch, 512]
+        # 将 16384 维的特征输入到第一个全连接层 fc1，并通过 ReLU 激活。
+        # 输出尺寸：[Batch, 512]
         x = F.relu(self.fc1(x))
 
-        # [Batch, 512] -> FC2 -> [Batch, 62] (输出原始得分 logits)
+        # 将 512 维的特征输入到输出层 fc2，得到最终每个类别的原始得分（logits）。
+        # 注意：这里一般不加激活函数，因为在计算损失（如 CrossEntropyLoss）时会自动应用 Softmax。
+        # 输出尺寸：[Batch, 62]
         x = self.fc2(x)
 
         return x
@@ -157,81 +174,104 @@ class SimpleCNN(nn.Module):
 class DetailedCNN(nn.Module):
     """
     加强版 CNN 网络 (支持更深层次特征提取，加入正则化机制)
-    相比 SimpleCNN 增加了：第三层卷积、批量归一化(BatchNorm)、Dropout
+    相比 SimpleCNN 增加了：第三层卷积、批量归一化(BatchNorm)、Dropout。
+    这是本项目实际训练和推断使用的主力模型。
     """
     def __init__(self, num_classes: int = 62, dropout_rate: float = 0.5):
         super(DetailedCNN, self).__init__()
 
         # ----- 第一层卷积块 -----
-        # 尺寸: 64x64 -> 池化后 -> 32x32
+        # 输入 1 通道，输出 32 通道。
         self.conv1 = nn.Conv2d(1, 32, 3, padding=1)
-        self.bn1 = nn.BatchNorm2d(32)  # 标准化卷积输出，加速训练，使模型对超参数不那么敏感
+        # BatchNorm2d (批量归一化)：在特征图进入激活函数前，将其分布强制拉回均值为 0、方差为 1 的正态分布。
+        # 作用极其重要：1. 解决梯度消失问题；2. 允许使用更大的学习率，大幅加速训练；3. 降低模型对初始权重的敏感度。
+        self.bn1 = nn.BatchNorm2d(32)
 
         # ----- 第二层卷积块 -----
-        # 尺寸: 32x32 -> 池化后 -> 16x16
+        # 输入 32 通道，输出 64 通道。
         self.conv2 = nn.Conv2d(32, 64, 3, padding=1)
         self.bn2 = nn.BatchNorm2d(64)
 
         # ----- 第三层卷积块 (新增) -----
-        # 提取更深层次的抽象特征
-        # 尺寸: 16x16 -> 池化后 -> 8x8
+        # 相比 SimpleCNN，增加了一层卷积，旨在提取更深层次、更高级的抽象特征（例如完整字母的形状）。
+        # 输入 64 通道，输出 128 通道。
         self.conv3 = nn.Conv2d(64, 128, 3, padding=1)
         self.bn3 = nn.BatchNorm2d(128)
 
+        # 共用的最大池化层
         self.pool = nn.MaxPool2d(2, 2)
 
         # ----- 全连接层 -----
-        # 经过3次池化：64 -> 32 -> 16 -> 8
-        # 展平维度计算：128个通道 * 8 * 8 = 8192
+        # 展平维度计算：
+        # 图像初始大小为 64x64。经过 3 次 2x2 的池化后：
+        # 64 / 2 = 32
+        # 32 / 2 = 16
+        # 16 / 2 = 8
+        # 最终特征图大小为 8x8，通道数为 128。所以展平后的总维度是 128 * 8 * 8 = 8192。
         self.fc1 = nn.Linear(128 * 8 * 8, 512)
 
         # 针对全连接层的一维 BatchNorm
-        # 核心作用：防止数据偏移进入 ReLU 的负区间导致神经元失活（即"ReLU 死亡"）
+        # 核心作用：防止全连接层输出的数据偏移进入 ReLU 的负区间，导致神经元失活（即"ReLU 死亡"现象，永远输出 0）。
         self.bn_fc1 = nn.BatchNorm1d(512)
 
-        # Dropout 层：在训练时随机按比例（默认50%）关闭部分神经元
-        # 作用：强制网络学习更加鲁棒的特征，防止过拟合
+        # Dropout 层 (随机失活)
+        # 训练时，以 dropout_rate（默认 50%）的概率随机将部分神经元的输出置为 0。
+        # 作用：强迫网络不要过度依赖某几个特定的特征节点，而是学习更广泛、更鲁棒的特征，是防止过拟合（死记硬背训练集）的利器。
+        # 注意：在测试/推断模式下（model.eval()），Dropout 会自动失效，所有神经元都会参与计算。
         self.dropout = nn.Dropout(dropout_rate)
 
+        # 最终输出层：从 512 维映射到具体的分类数（62类）
         self.fc2 = nn.Linear(512, num_classes)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """前向传播过程：严格按照 Conv -> BN -> ReLU -> Pool 顺序"""
-        # 第一层: 输入 64x64 -> 输出特征图 32x32
+        # 第一块: 卷积 -> 归一化 -> 激活 -> 池化
+        # 输入尺寸: 64x64 -> 池化后输出特征图尺寸: 32x32
         x = self.pool(F.relu(self.bn1(self.conv1(x))))
 
-        # 第二层: 输入 32x32 -> 输出特征图 16x16
+        # 第二块:
+        # 输入尺寸: 32x32 -> 池化后输出特征图尺寸: 16x16
         x = self.pool(F.relu(self.bn2(self.conv2(x))))
 
-        # 第三层: 输入 16x16 -> 输出特征图 8x8
+        # 第三块:
+        # 输入尺寸: 16x16 -> 池化后输出特征图尺寸: 8x8
         x = self.pool(F.relu(self.bn3(self.conv3(x))))
 
-        # 自适应展平: 将多维特征拉平成一维 [Batch, 8192]
+        # 自适应展平: 将多维特征 [Batch, 128, 8, 8] 拉平成一维 [Batch, 8192]
         x = x.view(x.size(0), -1)
 
         # 全连接层的执行顺序：Linear -> BatchNorm -> ReLU -> Dropout
+        # 1. 线性变换计算特征组合
         x = self.fc1(x)
-        x = self.bn_fc1(x)  # 强制拉回正态分布，确保均值为0，方差为1
-        x = F.relu(x)       # 此时刚好有约 50% 的值大于 0，被 ReLU 完美激活
-        x = self.dropout(x) # 训练阶段随机断开连接，测试阶段自动失效
+        # 2. 归一化，确保数据分布健康
+        x = self.bn_fc1(x)
+        # 3. 非线性激活
+        x = F.relu(x)
+        # 4. 随机丢弃部分信息，增加鲁棒性
+        x = self.dropout(x)
 
-        x = self.fc2(x)     # 输出分类 logits: [Batch, 62]
+        # 输出层，得到最终分类得分: [Batch, 62]
+        x = self.fc2(x)
         return x
 
 
 def count_parameters(model: nn.Module) -> int:
     """计算模型中需要梯度更新的可训练参数总数"""
+    # 遍历模型的所有参数，如果 requires_grad 为 True（即参与训练更新），则累加其元素个数（numel）
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
 
 def get_output_shape(model: nn.Module, input_shape: Tuple[int, ...]) -> Tuple[int, ...]:
     """计算模型输出形状（用于验证网络架构尺寸的正确性）"""
+    # 设为评估模式，防止 Dropout 干扰
     model.eval()
-    with torch.no_grad():
-        # 添加 batch 维度 (batch_size=1) 模拟实际输入
+    with torch.no_grad(): # 不计算梯度，节省内存
+        # 添加 batch 维度 (batch_size=1) 模拟实际输入，生成一个全 0 的假张量
         dummy_input = torch.zeros(1, *input_shape)
+        # 前向传播跑一次
         output = model(dummy_input)
-        return output.shape[1:]  # 移除 batch 维度返回
+        # 移除 batch 维度并返回形状
+        return output.shape[1:]
 
 
 if __name__ == "__main__":
