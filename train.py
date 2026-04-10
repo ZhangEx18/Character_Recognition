@@ -175,7 +175,7 @@ def train(
     model = DetailedCNN(num_classes=62).to(device)
     print(f"\n模型已就绪，可训练参数总量: {count_parameters(model):,}")
 
-    criterion = nn.CrossEntropyLoss()
+    criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
 
     # 动态学习率策略：连续 5 轮验证集损失不下降，则学习率减半
