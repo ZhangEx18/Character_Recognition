@@ -91,9 +91,9 @@ class SimpleCNN(nn.Module):
     └─────────────────────────────────────────────────────────────────┘
     """
 
-    NUM_CLASSES = 62  # 总类别数
-    NUM_DIGITS = 10   # 数字类别数
-    NUM_LETTERS = 26  # 字母类别数
+    NUM_CLASSES = 62  # 总类别数：数字(10) + 小写字母(26) + 大写字母(26)
+    NUM_DIGITS = 10   # 数字类别数 (0-9)
+    NUM_LETTERS = 26  # 字母类别数 (a-z, A-Z)
 
     def __init__(self, num_classes):
         super(SimpleCNN, self).__init__()
