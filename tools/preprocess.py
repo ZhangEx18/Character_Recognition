@@ -2,16 +2,27 @@
 数据预处理与切分脚本 (Data Preprocessing & Splitter Pipeline)
 
 【系统架构定位】
-本脚本位于系统流水线的最前端（数据准备层）。
-它负责将原始混乱、庞大、未分类的数据源，清洗并转换为标准化、轻量级的模型燃料，
-并严格按照工业级标准，在物理硬盘层面上将数据强制划分为训练集(Train)、验证集(Val)和测试集(Test)。
+本模块位于整个模型流水线的最前端（数据准备层）。
+其核心职责是将原始混乱、庞大且未分类的数据源，清洗并转化为标准化、轻量级的“模型燃料”；
+同时严格遵循工业级标准，在物理硬盘层面上将数据强制划分为训练集 (Train)、验证集 (Val)和测试集 (Test)。
 
-【核心工程特性】
-1. 物理隔离：直接在硬盘上建立 train/val/test 文件夹。这比用代码在内存中切分更安全，彻底杜绝数据泄露。
-2. 增量处理：自带缓存记忆能力。如果中途断电或者新增了部分图片，再次运行只会处理新图，不会全部重头再来。
-3. 极限瘦身：将彩色原图转为单通道灰度图并压缩尺寸，极大降低后续训练时的 I/O 和显存压力。
+【全景处理流程】
+[起点] 原始图像: ../A/A_0.jpg (假设 800x800, RGB 彩色)
+  │
+  ├─ 1. 扫描检索: 被 os.listdir 捕获
+  ├─ 2. 状态查重: 三路排查 (Train/Val/Test)，确认为新入库图像
+  ├─ 3. 随机分配: 生成随机数 0.72 -> 命中并划入 Train 集合
+  │
+[入内存] cv2.imread()
+  │
+  ├─ 4. 光学清洗 (灰度化): 转为单通道 (剥离色彩干扰，保留核心轮廓)
+  ├─ 5. 空间降维 (缩放): Resize 到 64x64 (缩小物理体积，浓缩特征)
+  │
+[终点] 写入硬盘: cv2.imwrite()
+  └──> data/processed/train/A/A_0.jpg (最终形态: 64x64, 标准灰度图)
 
-运行方式: 确保终端当前路径为【项目根目录】，运行: python -m tools.preprocess
+【运行方式说明】
+确保终端当前路径为【项目根目录】，运行: python -m tools.preprocess
 """
 
 import os
@@ -24,7 +35,7 @@ from tqdm import tqdm
 # ============================================================
 
 # 原始数据池的绝对或相对路径（存放所有按类别分好文件夹的原图）
-RAW_DATA_DIR = 'data/raw/archive/augmented_images/augmented_images1'
+RAW_DATA_DIR = 'data/raw/archive/augmented_images'
 
 # 清洗后标准数据的输出阵地
 OUTPUT_DIR = 'data/processed'
@@ -45,14 +56,13 @@ def preprocess_and_split():
     """
     核心调度流水线：遍历原始目录 -> 随机抓阄 -> 清洗压缩 -> 落盘保存
     """
+    print("=" * 60)
+    print(f"启动数据预处理引擎... 目标物理分辨率: {TARGET_SIZE}")
+    print(f"切分策略: Train {SPLIT_RATIOS['train']:.0%} | Val {SPLIT_RATIOS['val']:.0%} | Test {SPLIT_RATIOS['test']:.0%}")
+    print("=" * 60)
+
     # 1. 扫描出原数据目录下所有的合法类别文件夹（例如 '0', 'a', 'H_caps'）
     categories = [d for d in os.listdir(RAW_DATA_DIR) if os.path.isdir(os.path.join(RAW_DATA_DIR, d))]
-
-    print("=" * 60)
-    print(f"🚀 启动数据预处理引擎... 目标物理分辨率: {TARGET_SIZE}")
-    print(f"📊 切分策略: Train {SPLIT_RATIOS['train']:.0%} | Val {SPLIT_RATIOS['val']:.0%} | Test {SPLIT_RATIOS['test']:.0%}")
-    print("=" * 60)
-
     # 遍历每一个类别（字母或数字）
     for cat in categories:
         cat_in_path = os.path.join(RAW_DATA_DIR, cat)
@@ -61,21 +71,25 @@ def preprocess_and_split():
         images = [img for img in os.listdir(cat_in_path) if img.endswith(('.png', '.jpg', '.jpeg'))]
 
         # tqdm 包裹 images 列表，在终端渲染出该类别的处理进度条
-        for img_name in tqdm(images, desc=f"正在清洗类别 [{cat:>6s}]"):
+        for img_name in tqdm(images, desc=f"正在清洗类别 [{cat:<6s}]",colour='green'):
 
             # ------------------------------------------------------------
-            # 步骤 A：【增量断点续传检查】(Incremental Check)
+            # 步骤 A：【增量检测逻辑】—— 判定当前文件是否已在历史任务中完成
             # ------------------------------------------------------------
-            # 作用：如果处理几十万张图时电脑死机了，下次重启只需跳过已处理的，秒出进度。
-            is_processed = False
+            is_processed = False  # 初始化状态：假设该图尚未被处理过
+
+            # 核心难点：由于图片分配是随机的，我们无法预知它在哪个子集
+            # 故需遍历 'train', 'val', 'test' 三个潜在的输出路径进行查验
             for split_name in SPLIT_RATIOS.keys():
-                # 拼装假设它已经被处理过了的物理路径
+
+                # 按照目录结构规则，拼装出该图片对应的“理论存放路径”
+                # 路径规则：输出根目录 / 集合名(train等) / 类别名 / 文件名
                 check_path = os.path.join(OUTPUT_DIR, split_name, cat, img_name)
-                # 如果这个文件在硬盘上客观存在，说明它之前被处理过
+
+                # 执行物理磁盘检查：如果该路径下已存在文件，判定为“已处理”
                 if os.path.exists(check_path):
                     is_processed = True
-                    break
-
+                    break  # 只要在一个文件夹里找到了，就没必要再找其他的，立即跳出内层循环
             # 如果已经被处理过，直接跳过后面的全部逻辑，处理下一张图
             if is_processed:
                 continue
@@ -127,8 +141,8 @@ def preprocess_and_split():
             cv2.imwrite(out_file_path, img_resized)
 
     print("\n" + "=" * 60)
-    print(f"✅ 全量数据清洗与物理隔离完成！")
-    print(f"📦 标准化数据沙箱已输出至：{OUTPUT_DIR}")
+    print(f"全量数据清洗与物理隔离完成！")
+    print(f"标准化数据沙箱已输出至：{OUTPUT_DIR}")
     print("=" * 60)
 
 
