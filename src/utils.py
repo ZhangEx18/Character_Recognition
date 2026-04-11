@@ -2,14 +2,32 @@
 辅助工具模块 (Utility Hub - 支持 64x64 网络架构)
 
 【系统架构定位】
-本模块是整个 CNN 项目的“瑞士军刀”与“透视眼镜”。它与具体的业务逻辑解耦，
-专门负责处理那些通用但繁琐的底层操作，为训练、推理和数据模块提供强大的火力支援。
+本模块作为 CNN 项目的底层通用支撑库，与核心业务逻辑完全解耦。
+负责封装张量计算、模型拓扑诊断、硬件设备调度及高维特征可视化等基础操作，
+为数据流转、网络训练与推理评估提供标准化的 API 接口。
 
-【核心功能板块】
-1. 数学计算器：精准推演卷积/池化层的空间尺寸变化，告别“张量维度不匹配”的报错噩梦。
-2. 数据可视化 (透视眼)：将冰冷的 Loss 数字转化为直观的训练曲线，将黑盒网络中的卷积核与特征图具象化。
-3. 结构体检仪：一键扫描模型层级架构，统计数百万计的参数开销。
-4. 算力调度台：跨平台（Apple MPS / Nvidia CUDA / CPU）自动嗅探并分配最佳硬件加速器。
+【全景处理流程】(模块跨生命周期调用链路)
+[前置阶段] 架构设计与初始化
+  ├─ 1. 维度推演: 调用 calc_conv_output_size / calc_pool_output_size 验证特征图空间收缩率
+  ├─ 2. 拓扑诊断: 挂载 print_model_summary 执行 Dummy Input 穿透测试，排查全连接层维度断层
+  └─ 3. 硬件寻址: 触发 get_device() 嗅探并绑定 MPS/CUDA/CPU 计算引擎
+  │
+[运行阶段] 模型训练与验证 (被 train.py 循环调用)
+  └─ 4. 张量迁移: 依靠 to_device() 实现 Batch 数据与 Target 在 Host(CPU) 与 Device(加速器) 间的高效拷贝
+  │
+[后置阶段] 性能评估与可视化诊断
+  ├─ 5. 宏观收敛分析: 生成 plot_training_history 绘制全周期 Loss/Acc 演化折线图
+  ├─ 6. 微观错判分析: 渲染 plot_confusion_matrix 构建多类别混淆分布热力图
+  ├─ 7. 提取器诊断: 调用 visualize_conv_filters 观测底层卷积核的感受野与纹理响应偏好
+  └─ 8. 表征观测: 挂载 Forward Hook (visualize_feature_maps) 截获并渲染深层特征的激活响应图
+
+============================================================
+
+【系统功能总览】：
+1. 空间维度计算器：基于标准步长与填充公式，推演特征图在各层级间的空间尺寸映射关系。
+2. 训练指标可视化：渲染损失函数与准确率的演变趋势，支持过拟合/欠拟合状态的直观诊断。
+3. 拓扑结构分析仪：遍历计算图节点，统计算法参数总量，并执行前向维度兼容性校验。
+4. 异构计算调度台：实现底层硬件感知，自动路由张量至最优计算后端。
 """
 
 from typing import Tuple, List, Dict, Optional
@@ -19,14 +37,14 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib
 
-# 【工程避坑】：强制使用 'Agg' (Anti-Grain Geometry) 渲染后端
-# 原因：当代码运行在没有连接显示器的远程 Linux 服务器，或者作为后台脚本运行时，
-# 如果不写这行，Matplotlib 会尝试去寻找并弹出一个图形交互窗口 (GUI)，找不到就会直接崩溃报错。
+# 【环境兼容性设置】：强制指定 'Agg' (Anti-Grain Geometry) 渲染后端。
+# 目的：规避在无 X11 转发的远程 Linux 服务器或纯 CLI 环境下，
+# Matplotlib 尝试挂载 GUI 交互窗口而引发的系统级崩溃。
 matplotlib.use('Agg')
 
 
 # ============================================================
-# 1. 卷积与池化尺寸计算器 (网络架构师的算盘)
+# 1. 卷积与池化空间尺寸推导计算逻辑
 # ============================================================
 
 def calc_conv_output_size(
@@ -37,18 +55,18 @@ def calc_conv_output_size(
     dilation: int = 1
 ) -> int:
     """
-    计算卷积层输出特征图的单边物理尺寸。
+    计算二维卷积层输出特征图的单侧物理分辨率。
 
     【数学原理】：
-    遵循标准的卷积尺寸推导公式：
+    遵循标准的离散卷积维度推导等式：
     $O_{size} = \lfloor \frac{I_{size} + 2 \times P - D \times (K - 1) - 1}{S} \rfloor + 1$
 
     参数:
-        input_size: 输入图像/特征图的边长 (I)
-        kernel_size: 卷积核的边长 (K)
-        stride: 卷积核滑动的步长 (S)
-        padding: 边缘补零的圈数 (P)
-        dilation: 膨胀系数，常用于空洞卷积，默认为 1 (D)
+        input_size: 输入特征图的空间边长 (I)
+        kernel_size: 卷积核的局部感受野边长 (K)
+        stride: 滑动窗口的空间步幅 (S)
+        padding: 空间维度的零填充圈数 (P)
+        dilation: 膨胀系数 (D)，默认值 1 代表标准连续卷积
     """
     output_size = (input_size + 2 * padding - dilation * (kernel_size - 1) - 1) // stride + 1
     return output_size
@@ -60,11 +78,11 @@ def calc_pool_output_size(
     stride: int = None
 ) -> int:
     """
-    计算池化层输出的单边物理尺寸。
+    计算下采样(池化)层输出特征图的单侧物理分辨率。
 
-    【机制】：
-    如果没有显式指定步长(stride)，PyTorch 默认步长等于池化核大小。
-    计算公式：$O_{size} = \lfloor \frac{I_{size}}{S} \rfloor$
+    【机制说明】：
+    若未显式声明 stride 参数，PyTorch API 默认令其等同于 kernel_size。
+    推导等式：$O_{size} = \lfloor \frac{I_{size}}{S} \rfloor$
     """
     if stride is None:
         stride = kernel_size
@@ -73,40 +91,40 @@ def calc_pool_output_size(
 
 def print_size_changes():
     """
-    尺寸演变推演沙盘。
-    打印展示一个标准 64x64 输入在经过两次卷积和池化后的尺寸蜕变过程。
-    这对于新手理解“为什么最后展平是 16384 维”极其重要。
+    CNN 特征图空间映射推演逻辑演示。
+    输出基准输入 (64x64) 在经历两次标准化卷积与池化操作后的空间维度演变链路，
+    用于验证进入全连接层之前的 Flatten 维度总量。
     """
     print("=" * 60)
-    print("CNN 特征图尺寸空间演变推演（基准输入 64×64）")
+    print("CNN 特征图空间维度演变推演（基准张量 64×64）")
     print("=" * 60)
 
     size = 64
-    print(f"[起点] 原始图像输入: {size}×{size}")
+    print(f"[起点] 初始张量空间维度: {size}×{size}")
 
-    # Conv1: 3x3 卷积核，填充 1，步长 1 -> 尺寸不变
+    # Conv1 阶段
     size = calc_conv_output_size(size, kernel_size=3, padding=1, stride=1)
-    print(f" -> 经过 Conv1 (核3×3, 填充1): 维持 {size}×{size}")
+    print(f" -> 通过 Conv1 (Kernel: 3×3, Padding: 1): 保持维度 {size}×{size}")
 
-    # Pool1: 2x2 最大池化 -> 尺寸直接腰斩
+    # Pool1 阶段
     size = calc_pool_output_size(size, kernel_size=2)
-    print(f" -> 经过 Pool1 (核2×2): 压缩至 {size}×{size}  <-- 空间降维 (长宽减半)")
+    print(f" -> 通过 Pool1 (Kernel: 2×2): 空间分辨率降维至 {size}×{size}")
 
-    # Conv2: 继续特征提取
+    # Conv2 阶段
     size = calc_conv_output_size(size, kernel_size=3, padding=1, stride=1)
-    print(f" -> 经过 Conv2 (核3×3, 填充1): 维持 {size}×{size}")
+    print(f" -> 通过 Conv2 (Kernel: 3×3, Padding: 1): 保持维度 {size}×{size}")
 
-    # Pool2: 再次池化
+    # Pool2 阶段
     size = calc_pool_output_size(size, kernel_size=2)
-    print(f" -> 经过 Pool2 (核2×2): 压缩至 {size}×{size}  <-- 二次空间降维")
+    print(f" -> 通过 Pool2 (Kernel: 2×2): 空间分辨率二次降维至 {size}×{size}")
 
-    print(f"\n[终点] 准备进入全连接层：")
-    print(f"假设该层有 64 个通道，则展平(Flatten)后的总特征数量为: 64通道 × {size} × {size} = {64 * size * size}")
+    print(f"\n[终点] 线性分类器输入准备：")
+    print(f"若当前特征通道数设为 64，则张量展平 (Flatten) 后的特征向量长度为: 64通道 × {size} × {size} = {64 * size * size}")
     print("=" * 60)
 
 
 # ============================================================
-# 2. 数据与模型可视化工具 (撕开 AI 的黑盒)
+# 2. 诊断级数据与高维特征可视化库
 # ============================================================
 
 def plot_training_history(
@@ -114,38 +132,39 @@ def plot_training_history(
     save_path: str = "training_history.png"
 ):
     """
-    绘制并保存宏观训练生命周期曲线（Loss 与 Accuracy）。
+    渲染模型完整训练生命周期内的标量评估指标 (Loss/Accuracy) 收敛曲线。
 
-    【核心诊断价值】：
-    1. 观察两条线的间距：如果训练准确率(蓝线)一路狂飙，但验证准确率(红线)停滞不前，
-       说明模型在“死记硬背”（即过拟合），需要增大 Dropout 或增加数据增强。
-    2. 观察曲线平滑度：如果曲线呈剧烈锯齿状震荡，说明学习率(Learning Rate)可能设置过大。
+    【诊断价值说明】：
+    1. 泛化能力评估：若训练集指标持续优化，但验证集指标出现停滞或反向发散，
+       则指示模型陷入过拟合 (Overfitting) 状态，需引入权重衰减或数据增强策略。
+    2. 稳定性监控：高频的剧烈振荡通常提示全局学习率 (Learning Rate) 设定过高，
+       或批尺寸 (Batch Size) 容量不足。
     """
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4))
     epochs = range(1, len(history['train_loss']) + 1)
 
-    # 左图：损失率 (Loss) 越低越好
-    ax1.plot(epochs, history['train_loss'], 'b-', label='训练集损失 (Train Loss)', linewidth=2)
-    ax1.plot(epochs, history['val_loss'], 'r-', label='验证集损失 (Val Loss)', linewidth=2)
-    ax1.set_xlabel('训练轮次 (Epoch)', fontsize=12)
-    ax1.set_ylabel('损失值 (Loss)', fontsize=12)
-    ax1.set_title('模型损失收敛曲线', fontsize=14)
+    # 损失函数收敛图表
+    ax1.plot(epochs, history['train_loss'], 'b-', label='训练集经验风险 (Train Loss)', linewidth=2)
+    ax1.plot(epochs, history['val_loss'], 'r-', label='验证集泛化风险 (Val Loss)', linewidth=2)
+    ax1.set_xlabel('迭代轮次 (Epoch)', fontsize=12)
+    ax1.set_ylabel('目标函数值 (Loss)', fontsize=12)
+    ax1.set_title('损失函数收敛轨迹', fontsize=14)
     ax1.legend(fontsize=10)
     ax1.grid(True, alpha=0.3)
 
-    # 右图：准确率 (Accuracy) 越高越好
-    ax2.plot(epochs, history['train_acc'], 'b-', label='训练集准确率 (Train Acc)', linewidth=2)
+    # 准确率演变图表
+    ax2.plot(epochs, history['train_acc'], 'b-', label='训练集拟合度 (Train Acc)', linewidth=2)
     ax2.plot(epochs, history['val_acc'], 'r-', label='验证集准确率 (Val Acc)', linewidth=2)
-    ax2.set_xlabel('训练轮次 (Epoch)', fontsize=12)
+    ax2.set_xlabel('迭代轮次 (Epoch)', fontsize=12)
     ax2.set_ylabel('准确率 (%)', fontsize=12)
-    ax2.set_title('模型准确率爬升曲线', fontsize=14)
+    ax2.set_title('模型分类准确率演化轨迹', fontsize=14)
     ax2.legend(fontsize=10)
     ax2.grid(True, alpha=0.3)
 
     plt.tight_layout()
     plt.savefig(save_path, dpi=150, bbox_inches='tight')
     plt.close()
-    print(f"📈 训练生命周期曲线已落盘: {save_path}")
+    print(f"📈 生命周期收敛曲线已写入: {save_path}")
 
 
 def plot_confusion_matrix(
@@ -155,29 +174,29 @@ def plot_confusion_matrix(
     normalize: bool = True
 ):
     """
-    绘制混淆矩阵热力图（62类字符的全面视力表）。
+    渲染并输出全品类分类任务的混淆矩阵热力图。
 
-    【阅读指南】：
-    完美的模型会呈现一条深色的从左上到右下的对角线（真实值=预测值）。
-    对角线以外的任何深色斑块，都代表模型经常“认错”的字符对（例如把大写 'O' 认成数字 '0'）。
+    【指标判读逻辑】：
+    理想模型下的高频响应区域应高度集中于主对角线。
+    脱离对角线的高密度激活斑块，客观反映了模型在特定特征流形下存在系统性的分类混淆倾向
+    (例如结构相近字符特征提取能力的不足)。
     """
-    # 归一化处理：将绝对数量转化为百分比，防止样本数量不平衡导致颜色失真
+    # 归一化操作：转换为类内召回率百分比，消除类别样本分布不均引入的视觉偏差
     if normalize:
         confusion_matrix = confusion_matrix.astype('float') / (confusion_matrix.sum(axis=1, keepdims=True) + 1e-8)
 
     fig, ax = plt.subplots(figsize=(12, 10))
-    # 使用渐变蓝 (Blues)，数值越接近 1 (即 100%) 颜色越深
+    # 采用 Blues 颜色映射，响应概率趋近 1.0 时饱和度达到最大
     im = ax.imshow(confusion_matrix, cmap='Blues')
 
-    # 密集设置 62 个刻度
     ax.set_xticks(range(len(class_names)))
     ax.set_yticks(range(len(class_names)))
     ax.set_xticklabels(class_names, fontsize=8)
     ax.set_yticklabels(class_names, fontsize=8)
 
-    ax.set_xlabel('AI 预测给出的结果 (Predicted)', fontsize=12)
-    ax.set_ylabel('数据的真实身份 (Actual)', fontsize=12)
-    ax.set_title('全品类混淆矩阵热力图 (Confusion Matrix)', fontsize=14)
+    ax.set_xlabel('模型输出概率最大类 (Predicted)', fontsize=12)
+    ax.set_ylabel('数据真值标签 (Actual)', fontsize=12)
+    ax.set_title('全集分类混淆响应热力图 (Confusion Matrix)', fontsize=14)
     plt.colorbar(im, ax=ax)
 
     plt.tight_layout()
@@ -195,32 +214,31 @@ def plot_sample_predictions(
     num_samples: int = 16
 ):
     """
-    随机抽取样本展示实际预测结果（模型汇报专用）。
-    直观展示图像长什么样、实际标签是什么、模型猜的是什么。
+    构建随机批次样本的预测对照面板，用于直观检验局部推理精度。
     """
     fig, axes = plt.subplots(4, 4, figsize=(12, 12))
 
     for i, ax in enumerate(axes.flat):
         if i < num_samples:
-            # 数据流向：GPU Tensor -> CPU -> Numpy -> 剥除冗余维度 -> 反归一化
+            # 张量处理管线：GPU 卸载 -> 降维剥离 -> Numpy 转换 -> 逆归一化投影至 [0,1]
             img = images[i].squeeze().cpu().numpy()
-            img = img * 0.5 + 0.5  # 将 [-1, 1] 映射回 [0, 1] 供图像渲染
+            img = img * 0.5 + 0.5
 
             ax.imshow(img, cmap='gray')
 
             true_label = class_names[labels[i]]
             pred_label = class_names[predictions[i]]
 
-            # 视觉反馈：猜对标绿，猜错标红
+            # 采用布尔判别决定高亮提示色
             color = 'green' if predictions[i] == labels[i] else 'red'
-            ax.set_title(f'AI 预测: {pred_label} | 真实值: {true_label}', color=color, fontsize=10)
+            ax.set_title(f'Pred: {pred_label} | True: {true_label}', color=color, fontsize=10)
 
         ax.axis('off')
 
     plt.tight_layout()
     plt.savefig(save_path, dpi=150, bbox_inches='tight')
     plt.close()
-    print(f"🎯 抽样预测图集已保存: {save_path}")
+    print(f"🎯 批次预测抽样图集已保存: {save_path}")
 
 
 def visualize_conv_filters(
@@ -229,18 +247,18 @@ def visualize_conv_filters(
     save_path: Optional[str] = None
 ):
     """
-    可视化指定卷积层内的“卷积核权重” (Filters / Weights)。
+    提取并可视化指定卷积层的参数权重 (Filters / Weights)。
 
-    【原理解析】：
-    通过把卷积核本身当作小图片画出来，我们可以看到 AI 第一层是在寻找什么特征。
-    通常第一层卷积核看起来像是一些边缘检测器（横线、竖线、斜线）。
+    【观测意义】：
+    通过将权值矩阵逆向映射为像素阵列，可分析模型的底层感受野偏好。
+    一般而言，浅层网络倾向于收敛为响应 Gabor 滤波器形式的基础边缘、纹理检测器。
     """
-    # 动态抓取目标层
+    # 动态挂载目标计算层
     conv_layer = getattr(model, layer_name)
-    # 取出权重数据 (剥离计算图并放到 CPU)
+    # 提取权重张量，切断梯度图并转移至 Host 内存
     filters = conv_layer.weight.data.cpu()
 
-    # 最大最小归一化，把无论多大范围的权重都强行压缩到 [0, 1] 区间以便绘制灰度图
+    # 执行 Min-Max 缩放，将浮点权重张量线性映射至标准灰度空间 [0, 1]
     f_min, f_max = filters.min(), filters.max()
     filters = (filters - f_min) / (f_max - f_min)
 
@@ -248,7 +266,7 @@ def visualize_conv_filters(
     grid_size = int(np.ceil(np.sqrt(num_filters)))
 
     fig, axes = plt.subplots(grid_size, grid_size, figsize=(10, 10))
-    fig.suptitle(f'{layer_name} 卷积核(过滤器)权重显微图', fontsize=14)
+    fig.suptitle(f'{layer_name} 权重感受野分布图', fontsize=14)
 
     for i, ax in enumerate(axes.flat):
         if i < num_filters:
@@ -259,7 +277,7 @@ def visualize_conv_filters(
     save_name = save_path if save_path else f'{layer_name}_filters.png'
     plt.savefig(save_name, dpi=150, bbox_inches='tight')
     plt.close()
-    print(f"🔬 卷积核显微图已保存: {save_name}")
+    print(f"🔬 卷积核特征权重图已保存: {save_name}")
 
 
 def visualize_feature_maps(
@@ -269,41 +287,40 @@ def visualize_feature_maps(
     save_path: Optional[str] = None
 ):
     """
-    可视化一张真实图片在穿过某一层后，被提取出的“特征图” (Feature Maps)。
+    基于前向传播钩子机制 (Forward Hooks)，截获并渲染张量在指定层的中间激活状态 (Feature Maps)。
 
-    【原理解析】：
-    利用 PyTorch 的 Hook (钩子) 机制，潜入网络内部，在数据流经过目标层时“拦截”并拷贝一份输出。
-    你可以看到随着网络变深，图像从最初的“轮廓清晰”逐渐变成“高度抽象的马赛克团”。
+    【观测意义】：
+    监控输入特征矩阵在高维隐空间中的演化过程。
+    网络深度增加会导致表征形态由显式的几何轮廓向高度抽象、稀疏的语义级激活阵列过渡。
     """
     model.eval()
     feature_maps = []
 
-    # 定义“钩子”函数：一旦目标层完成前向传播，就自动触发此函数收集数据
+    # 注册回调句柄：目标层前向传递闭环时，挂载函数捕获输出张量
     def hook(_module, _input, output):
         feature_maps.append(output)
 
-    # 将钩子挂载到指定的层上
     layer = getattr(model, layer_name)
     hook_handle = layer.register_forward_hook(hook)
 
-    # 喂入一张图，让网络跑一次，触发钩子收集证据
+    # 封锁自动求导引擎，触发一次单向计算流
     with torch.no_grad():
         _ = model(image)
 
-    # 收集完毕，立刻拆除钩子，以免影响后续正常运算
+    # 注销监听句柄，防止持续挂载导致内存泄漏
     hook_handle.remove()
 
-    # 提取第一张图的第一个特征组
+    # 截取首个 Batch 的激活张量堆叠
     maps = feature_maps[0][0].cpu()
-    num_maps = min(maps.shape[0], 16) # 最多展示 16 张特征图
+    num_maps = min(maps.shape[0], 16)
     grid_size = 4
 
     fig, axes = plt.subplots(grid_size, grid_size, figsize=(12, 12))
-    fig.suptitle(f'{layer_name} 内部特征流转状态图 (Activations)', fontsize=14)
+    fig.suptitle(f'{layer_name} 局部特征激活响应图 (Activations)', fontsize=14)
 
     for i, ax in enumerate(axes.flat):
         if i < num_maps:
-            # 使用 viridis (紫绿黄) 伪彩色映射，颜色越亮代表该区域特征越强烈
+            # 采用 Viridis 伪彩色映射以强化特征激活高值区域的对比度
             ax.imshow(maps[i], cmap='viridis')
         ax.axis('off')
 
@@ -311,20 +328,20 @@ def visualize_feature_maps(
     save_name = save_path if save_path else f'{layer_name}_feature_maps.png'
     plt.savefig(save_name, dpi=150, bbox_inches='tight')
     plt.close()
-    print(f"🧬 特征流转状态图已保存: {save_name}")
+    print(f"🧬 特征激活状态流转图已保存: {save_name}")
 
 
 # ============================================================
-# 3. 模型结构诊断工具 (架构体检仪)
+# 3. 计算图结构诊断与参数分析机制
 # ============================================================
 
 def count_parameters(model: nn.Module) -> int:
-    """统计整个模型中所有参与梯度更新的可训练参数总和"""
+    """计算模型中具有 `requires_grad=True` 属性的所有可学习参数标量总和"""
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
 
 def count_parameters_by_layer(model: nn.Module) -> Dict[str, int]:
-    """像做 CT 一样，拆解并统计每一层的参数量开销，找出哪里最占显存"""
+    """执行层级参数开销分析，精准定位计算图内存空间占用节点"""
     params_dict = {}
     for name, param in model.named_parameters():
         if param.requires_grad:
@@ -334,53 +351,52 @@ def count_parameters_by_layer(model: nn.Module) -> Dict[str, int]:
 
 def print_model_summary(model: nn.Module, input_size: Tuple[int, ...] = (1, 64, 64)):
     """
-    打印详细的网络层级结构分析报告，并执行一次前向模拟验证张量尺寸是否匹配。
+    输出网络拓扑结构的系统级摘要，并注入 Dummy Input 以检验层间维度的传递连贯性。
     """
     print("\n" + "=" * 60)
-    print("AI 架构剖析摘要 (Model Architecture Summary)")
+    print("AI 计算图拓扑结构剖析 (Architecture Topology Summary)")
     print("=" * 60)
 
     total = 0
-    print("\n[各层参数配额细节]:")
+    print("\n[层级参数配额清单]:")
     for name, param in model.named_parameters():
         if param.requires_grad:
             params = param.numel()
             total += params
-            print(f"  {name}: 形状 {list(param.shape)} -> 产生 {params:,} 个参数节点")
+            print(f"  {name}: 尺度 {list(param.shape)} -> 映射 {params:,} 个参数节点")
 
-    print(f"\n[全局汇总] 神经网络总可训练参数量: {total:,}")
+    print(f"\n[汇总] 模型全局可训练参数标量总和: {total:,}")
 
-    # 安全地进行一次模拟张量穿透测试，以尽早暴露尺寸崩盘的问题
+    # 执行模拟前向传播测试，验证矩阵维度对齐状态
     model.eval()
     with torch.no_grad():
         dummy_input = torch.zeros(1, *input_size)
         try:
             output = model(dummy_input)
-            print(f"  [穿透测试] 输入张量尺寸: {list(dummy_input.shape)}")
-            print(f"  [穿透测试] 输出张量尺寸: {list(output.shape)}")
-            print("  [状态] 张量流通完美，未检测到尺寸断裂！")
+            print(f"  [维度穿透测试] 基准输入 Tensor 形状: {list(dummy_input.shape)}")
+            print(f"  [维度穿透测试] 终端输出 Tensor 形状: {list(output.shape)}")
+            print("  [状态反馈] 张量流转无阻碍，各级维度匹配逻辑校验通过。")
         except Exception as e:
-            print(f"\n【💥 严重架构异常警告】张量流转失败！\n请检查 CNN 卷积输出到全连接层(Linear)之间的 Flatten 维度是否对应。\n底层错误信息: {e}")
+            print(f"\n[致命异常捕获] 张量流转中断！\n推断原因：特征提取层输出至线性全连接层 (Linear) 的降维 Flatten 操作存在张量形态错位。\n底层堆栈信息: {e}")
 
     print("=" * 60)
 
 
 # ============================================================
-# 4. 跨平台硬件加速管理器 (AI 引擎调度台)
+# 4. 异构计算硬件抽象与调度接口
 # ============================================================
 
 def get_device() -> torch.device:
     """
-    自动感知宿主环境，挂载最佳的深度学习硬件加速器。
-    【支持链条】：
-    优先级 1. Nvidia CUDA (高端独立显卡)
-    优先级 2. Apple MPS (Mac M系芯片的专属加速，Metal Performance Shaders)
-    优先级 3. CPU (最后的防线)
+    底层计算资源探测与绑定管理器。
+    【仲裁优先级策略】：
+    1. Nvidia CUDA (并行计算首选)
+    2. Apple MPS (Apple Silicon Metal 引擎加速适配)
+    3. CPU (降级回退方案)
     """
     if torch.cuda.is_available():
         return torch.device("cuda")
     elif torch.backends.mps.is_available():
-        # 【Mac M5 芯片专项优化】：如果检测到您的 MacBook Air，会稳定触发此逻辑
         return torch.device("mps")
     else:
         return torch.device("cpu")
@@ -388,29 +404,28 @@ def get_device() -> torch.device:
 
 def to_device(data, device: torch.device):
     """
-    高阶张量搬运工。
-    安全地将普通张量，或者嵌套在列表/元组中的多个张量，一并发送至目标硬件显存。
+    广义张量设备迁移封装器。
+    支持单一 Tensor 或深层嵌套的 Tuple/List 数据结构的递归式硬件寻址投递。
     """
     if isinstance(data, (list, tuple)):
-        # 遇到列表，递归分解后搬运
+        # 递归降解复合数据结构并逐级转移
         return [to_device(x, device) for x in data]
     return data.to(device)
 
 
 # ============================================================
-# 工具包自身存活性测试桩
-# 当直接运行 `python src/utils.py` 时触发
+# 库文件集成测试桩 (Test Stub)
 # ============================================================
 
 if __name__ == "__main__":
     print("=" * 60)
-    print("Utils 辅助工具集 - 模块自检程序启动")
+    print("Utils 辅助支撑模块 - 自动化冒烟测试序列启动")
     print("=" * 60)
 
-    # 1. 测试尺寸计算沙盘
+    # 1. 验证维度推演逻辑
     print_size_changes()
 
-    # 2. 临时搭建一个微型网络，测试概览器是否正常工作
+    # 2. 构建测试拓扑验证摘要分析器
     mock_model = nn.Sequential(
         nn.Conv2d(1, 32, kernel_size=3, padding=1),
         nn.MaxPool2d(2, 2),
@@ -420,12 +435,12 @@ if __name__ == "__main__":
 
     print_model_summary(mock_model, input_size=(1, 64, 64))
 
-    # 3. 硬件嗅探测试
+    # 3. 验证硬件探测策略
     current_device = get_device()
-    print(f"\n⚡ 当前系统已激活的物理加速设备为: [{current_device}]")
+    print(f"\n[硬件感知模块] 现役系统分配的加速设备标识: [{current_device}]")
     if str(current_device) == 'mps':
-        print("  -> 检测到 Apple Silicon (Mac M系列) 硬件加速引擎已就绪！")
+        print("  -> 检测到 Apple Silicon (MPS 架构) 加速引擎已激活挂载。")
 
     print("\n" + "=" * 60)
-    print("Utils 模块自检运行完毕，一切正常。")
+    print("Utils 模块集成自检完成，所有内部接口状态健康。")
     print("=" * 60)

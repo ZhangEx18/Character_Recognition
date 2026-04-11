@@ -2,14 +2,33 @@
 数据加载与增强模块 (Data Loading & Augmentation Pipeline)
 
 【系统架构定位】
-本模块是整个 CNN 字符识别系统的“数据咽喉”。神经网络的上限由数据决定，本模块负责
-将冰冷的硬盘文件转化为网络可以直接吞吐的张量 (Tensor) 血液。
+本模块构筑了卷积神经网络的数据接入层 (Data Ingestion Layer)。
+其核心职责是将持久化存储的离散图像实体，转换为适配张量计算引擎的高维连续内存数据，
+并确立模型优化的数据分布基准。
 
-【核心职责】
-1. 类别解析：自动映射数字 (0-9)、小写字母 (a-z) 与大写字母 (A-Z) 共 62 个分类。
-2. 性能榨取：采用“牺牲内存换取极致 I/O 速度”的策略，将图片全量缓存至 RAM。
-3. 数据增强：在训练时引入随机仿射、旋转，模拟真实世界中潦草、倾斜的手写轨迹。
-4. 环境沙箱：严格隔离 Train / Val / Test 数据集，杜绝数据泄露导致的“假高分”。
+【全景处理流程】
+[起点] 物理存储层 (Disk): data/processed/{train,val,test}
+  │
+  ├─ 1. 索引构建与标签映射: 遍历目录拓扑，完成 62 类字符到离散整型标量 (0-61) 的映射。
+  ├─ 2. 内存驻留缓存 (In-Memory Caching): 全量读取 PIL 图像至 RAM，消除训练期的磁盘 I/O 瓶颈。
+  │
+[动态采样流] DataLoader 迭代获取 Batch
+  │
+  ├─ [训练期 (Train)] 随机增强流水线 (Stochastic Augmentation)
+  │   ├─ 3a. 空间几何变换: 应用随机旋转 (Rotation) 与仿射变换 (Affine)，提升对形态畸变的平移/旋转不变性。
+  │   └─ 4a. 张量化与标准化: 投射至 [-1.0, 1.0] 数据分布，缓解网络层间的协变量偏移。
+  │
+  ├─ [评估期 (Val/Test)] 确定性推断 (Deterministic Evaluation)
+  │   └─ 3b. 纯净数据流: 屏蔽所有随机几何扰动，仅执行张量转换与数学标准化操作。
+  │
+[终点] 计算图输入流 (Tensor): (Batch_Size, 1, 64, 64) 规范化张量矩阵及对应的 Target 向量
+
+========================================================================
+【核心架构职责】
+1. 标签离散化编码：构建字符类别 (0-9, a-z, A-Z) 至整型索引空间的双向映射。
+2. I/O 吞吐优化：利用高速内存缓存 (RAM Caching) 突破传统磁盘寻道与加载延迟。
+3. 数据增强正则化：在训练流中注入受控的几何扰动，抑制过拟合，提升模型泛化能力。
+4. 评估沙箱隔离：构建严格确定的评估数据流，防止信息泄露影响模型泛化能力的客观评测。
 """
 
 import os
@@ -24,349 +43,341 @@ from tqdm import tqdm
 
 
 # ============================================================
-# 1. 类别映射字典的构建与全局常量
+# 1. 类别映射空间的构建与全局常量定义
 # ============================================================
 
 def build_class_mapping() -> Tuple[Dict[str, int], Dict[int, str]]:
     """
-    构建类别名称 (String) 与网络输出索引 (Integer) 的双向映射字典。
+    构建字符类别 (String) 与目标网络输出标量 (Integer) 的双向哈希映射。
 
-    【为什么需要这个？】
-    神经网络的交叉熵损失函数 (CrossEntropyLoss) 不认识字符串 'A' 或 'b'，
-    它只认识 0 到 61 之间的整数标签。我们需要一个标准化的翻译官。
+    【架构意义】：
+    标准交叉熵损失函数 (CrossEntropyLoss) 需接收一维的非负整型张量作为计算目标。
+    此函数提供将物理语义标签转换为优化器可识别离散状态的标准化方法。
 
     返回:
-        name_to_idx: 例如 {'0': 0, 'a': 10, 'A': 36}
-        idx_to_name: 例如 {0: '0', 10: 'a', 36: 'A'}
+        name_to_idx: 字符到索引的映射，例如 {'0': 0, 'a': 10, 'A': 36}
+        idx_to_name: 索引到字符的映射，例如 {0: '0', 10: 'a', 36: 'A'}
     """
     name_to_idx = {}
     idx_to_name = {}
 
-    # 1. 注入数字 0-9 (索引范围 0-9)
+    # 1. 注入数字类别 0-9 (标量区间 0-9)
     for num_val in range(10):
-       name = str(num_val)
-       name_to_idx[name] = num_val
-       idx_to_name[num_val] = name
+        name = str(num_val)
+        name_to_idx[name] = num_val
+        idx_to_name[num_val] = name
 
-    # 2. 注入小写字母 a-z (索引范围 10-35)
+    # 2. 注入小写字母类别 a-z (标量区间 10-35)
     for offset, char in enumerate('abcdefghijklmnopqrstuvwxyz'):
-       idx = 10 + offset
-       name_to_idx[char] = idx
-       idx_to_name[idx] = char
+        idx = 10 + offset
+        name_to_idx[char] = idx
+        idx_to_name[idx] = char
 
-    # 3. 注入大写字母 A-Z (索引范围 36-61)
+    # 3. 注入大写字母类别 A-Z (标量区间 36-61)
     for offset, char in enumerate('ABCDEFGHIJKLMNOPQRSTUVWXYZ'):
-       idx = 36 + offset
-       name_to_idx[char] = idx
-       idx_to_name[idx] = char
+        idx = 36 + offset
+        name_to_idx[char] = idx
+        idx_to_name[idx] = char
 
     return name_to_idx, idx_to_name
 
 
-# 【全局单例】: 在模块导入时立即执行一次，生成供整个项目共享的常量字典
+# 【全局单例机制】: 模块初始化时执行分配，生成供整个计算进程共享的常量字典
 CLASS_NAME_TO_IDX, CLASS_IDX_TO_NAME = build_class_mapping()
-NUM_CLASSES = len(CLASS_NAME_TO_IDX)  # 固定为 62 类
+NUM_CLASSES = len(CLASS_NAME_TO_IDX)  # 约束类别维度为 62
 
 
 # ============================================================
-# 2. 核心数据集类定义 (PyTorch Dataset 规范实现)
+# 2. 核心数据集类定义 (基于 PyTorch Dataset 规范)
 # ============================================================
 
 class CharacterDataset(Dataset):
     """
-    高度优化的自定义字符数据集。
-    继承自 torch.utils.data.Dataset，重写了 __len__ 和 __getitem__ 魔术方法。
+    基于全量内存驻留策略优化的高效字符数据集。
+    继承自 torch.utils.data.Dataset，封装了底层数据寻址与加载逻辑。
     """
 
     def __init__(
-          self,
-          data_dir: str,
-          transform: Optional[Callable] = None,
-          image_size: int = 64
+        self,
+        data_dir: str,
+        transform: Optional[Callable] = None,
+        image_size: int = 64
     ):
-       """
-       初始化数据集上下文。
+        """
+        初始化数据集上下文。
 
-       参数:
-           data_dir: 数据所在的物理根目录 (如 'data/processed/train')
-           transform: 预处理与增强流水线函数
-           image_size: 图像标准裁剪尺寸
-       """
-       self.data_dir = Path(data_dir)
-       self.transform = transform
-       self.image_size = image_size
+        参数:
+            data_dir: 结构化数据所在的物理基目录
+            transform: 数据预处理与增强的级联函数 (Pipeline)
+            image_size: 张量统一的空间分辨率标准
+        """
+        self.data_dir = Path(data_dir)
+        self.transform = transform
+        self.image_size = image_size
 
-       # samples 存储元组: (图片物理路径, 对应的整数标签)
-       self.samples: List[Tuple[str, int]] = []
+        # samples 容器: 存储 (物理路径, 整型标签) 元组结构
+        self.samples: List[Tuple[str, int]] = []
 
-       # cached_images 存储真实的 PIL 图像对象，用于内存加速
-       self.cached_images = []
+        # cached_images 容器: 存储反序列化后的 PIL 图像对象
+        self.cached_images = []
 
-       # 实例化时立即触发数据解析与内存装载
-       self._load_samples()
+        # 触发底层数据解析与内存预载
+        self._load_samples()
 
     def _load_samples(self):
-       """
-       遍历物理目录树，解析类别并执行全量内存加载。
-       【工程权衡】：对于几万张 64x64 的小图片，从硬盘频繁读取会造成极其严重的 I/O 瓶颈。
-       我们选择在初始化时一次性将它们全部读入内存 (RAM)，让 GPU 训练时不需要等待硬盘。
-       """
-       if not self.data_dir.exists():
-          raise FileNotFoundError(f"致命错误：数据目录不存在: {self.data_dir}")
+        """
+        遍历目录拓扑，解析类别空间并执行全量内存加载。
 
-       # 第一步：遍历目录结构，收集路径和标签
-       for class_dir in self.data_dir.iterdir():
-          if not class_dir.is_dir(): continue
+        【工程权衡】：针对 64x64 规模的小分辨率图像，频繁的磁盘 I/O 将成为 GPU 调度的严重瓶颈。
+        本架构采用预加载策略 (Pre-loading)，将高频访问数据驻留于 RAM，从而实现计算资源的满载运转。
+        """
+        if not self.data_dir.exists():
+            raise FileNotFoundError(f"[Error]: 目标寻址失败，物理目录不存在: {self.data_dir}")
 
-          # 提取文件夹名称并翻译为整数标签
-          class_idx = self._parse_class_name(class_dir.name)
-          if class_idx is None: continue
+        # 阶段一：扫描目录层次结构，构建路径与标签映射清单
+        for class_dir in self.data_dir.iterdir():
+            if not class_dir.is_dir(): continue
 
-          # 抓取所有支持的图片格式
-          for ext in ["*.png", "*.jpg", "*.jpeg"]:
-             for img_path in class_dir.glob(ext):
-                self.samples.append((str(img_path), class_idx))
+            class_idx = self._parse_class_name(class_dir.name)
+            if class_idx is None: continue
 
-       print(f"成功扫描到 {len(self.samples)} 张有效图像。")
+            # 遍历并收集受支持的图像容器格式
+            for ext in ["*.png", "*.jpg", "*.jpeg"]:
+                for img_path in class_dir.glob(ext):
+                    self.samples.append((str(img_path), class_idx))
 
-       # 第二步：将图片物理读入内存池
-       print("🚀 正在将数据全量装载至内存池（以牺牲一定 RAM 换取极致训练速度）...")
-       for img_path, _ in tqdm(self.samples, desc="装载进度"):
-          # 使用 'L' 模式强制转换为 8-bit 单通道灰度图，大幅压缩内存占用
-          img = Image.open(img_path).convert('L')
-          self.cached_images.append(img)
+        print(f"目录解析完成，检测到 {len(self.samples)} 条有效数据记录。")
+
+        # 阶段二：执行 I/O 解码并挂载至内存池
+        print("🚀 执行全量内存驻留策略 (In-Memory Loading)...")
+        for img_path, _ in tqdm(self.samples, desc="预载进度"):
+            # 应用 'L' 模式约束像素深度为 8-bit 单通道灰度，优化内存空间占用
+            img = Image.open(img_path).convert('L')
+            self.cached_images.append(img)
 
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, int]:
-       """
-       数据分发核心逻辑。 DataLoader 每次通过索引向这里要数据。
+        """
+        定义数据分发核心逻辑。
+        响应 DataLoader 的迭代索引请求，输出单实例张量数据。
+        """
+        # 1. 规避磁盘 I/O，直接从驻留缓存中提取图像实例
+        img = self.cached_images[idx]
+        label = self.samples[idx][1]
 
-       参数:
-           idx: 样本序号
+        # 2. 动态应用数据增强与标准化级联 (动态计算图输入的前置处理)
+        if self.transform:
+            img = self.transform(img)
 
-       返回:
-           (经过处理的图像张量 Tensor, 整数标签 Integer)
-       """
-       # 1. 直接从高速缓存中取图，而不是去读硬盘
-       img = self.cached_images[idx]
-       label = self.samples[idx][1]
-
-       # 2. 动态应用数据增强和归一化（每次拿到的增强效果都不一样）
-       if self.transform:
-          img = self.transform(img)
-
-       return img, label
+        return img, label
 
     def __len__(self) -> int:
-       """返回数据集总容量"""
-       return len(self.samples)
+        """返回当前数据集实例包含的样本总规模"""
+        return len(self.samples)
 
     @staticmethod
     def _parse_class_name(dir_name: str) -> Optional[int]:
-       """
-       目录名安全解析器。
-       处理类似 '0', 'a', 以及避免 Windows 不区分大小写而引入的 'A_caps' 等特殊后缀。
-       """
-       # 匹配数字 '0' - '9'
-       if dir_name.isdigit():
-          return int(dir_name)
+        """
+        健壮的目录名称解析器。
+        兼容数字、标准小写字母，以及为规避操作系统大小写不敏感特性而附加后缀的大写字母标识。
+        """
+        if dir_name.isdigit():
+            return int(dir_name)
 
-       # 匹配单字母小写 'a' - 'z'
-       if len(dir_name) == 1 and dir_name.islower():
-          return CLASS_NAME_TO_IDX.get(dir_name)
+        if len(dir_name) == 1 and dir_name.islower():
+            return CLASS_NAME_TO_IDX.get(dir_name)
 
-       # 匹配带有 '_caps' 后缀的大写字母文件夹 (例如 'H_caps' 提取出 'H')
-       if dir_name.endswith("_caps"):
-          letter = dir_name[0].upper()
-          if len(letter) == 1 and letter.isupper():
-             return CLASS_NAME_TO_IDX.get(letter)
+        if dir_name.endswith("_caps"):
+            letter = dir_name[0].upper()
+            if len(letter) == 1 and letter.isupper():
+                return CLASS_NAME_TO_IDX.get(letter)
 
-       return None
+        return None
 
     def get_class_distribution(self) -> Dict[int, int]:
-       """
-       统计当前数据集中每个类别的样本数量。
-       用于排查是否存在“数据倾斜 (Data Imbalance)”问题。
-       """
-       distribution = {}
-       for _, label in self.samples:
-          distribution[label] = distribution.get(label, 0) + 1
-       return distribution
+        """
+        统计类别频率直方分布。
+        提供先验数据，用于检测数据集是否存在严峻的长尾分布或类别失衡 (Data Imbalance) 现象。
+        """
+        distribution = {}
+        for _, label in self.samples:
+            distribution[label] = distribution.get(label, 0) + 1
+        return distribution
 
 
 # ============================================================
-# 3. 计算机视觉变换与数据增强流水线
+# 3. 几何变换与数据增强逻辑 (Data Augmentation)
 # ============================================================
 
 def get_train_transform(image_size: int = 64) -> transforms.Compose:
     """
-    训练集专用的数据增强流水线。
-    目的：通过人造的随机干扰，逼迫网络学习字符的核心骨架，而不是死记硬背像素位置。
+    配置训练流的数据增强级联器。
+
+    【增强策略】：
+    通过引入受控的空间几何扰动 (旋转、平移、缩放)，强制网络学习目标的全局拓扑结构特征，
+    降低模型对局部像素分布的过度拟合倾向，显著提升泛化鲁棒性。
     """
     return transforms.Compose([
-       transforms.Resize((image_size, image_size)), # 统一尺寸
-       # 1. 随机正负 15 度旋转，模拟书写时的倾斜
-       transforms.RandomRotation(degrees=15),
-       # 2. 随机仿射：上下左右平移最多 10%，大小随机缩放至 90%-110% 之间
-       transforms.RandomAffine(
-          degrees=0,
-          translate=(0.1, 0.1),
-          scale=(0.9, 1.1)
-       ),
-       # 3. 将 PIL Image [0, 255] 转换为 FloatTensor [0.0, 1.0]，并在最前面增加颜色通道维度
-       transforms.ToTensor(),
-       # 4. 数学归一化：将 [0.0, 1.0] 映射到 [-1.0, 1.0]。公式: (x - 0.5) / 0.5
-       # 作用是让激活函数更快收敛，并减缓梯度消失
-       transforms.Normalize(mean=[0.5], std=[0.5])
+        transforms.Resize((image_size, image_size)),
+        # 引入局域旋转变换，约束范围 [-15, 15] 度
+        transforms.RandomRotation(degrees=15),
+        # 引入仿射变换：平移约束在空间维度的 ±10% 内，尺度缩放约束在 90%~110% 区间
+        transforms.RandomAffine(
+            degrees=0,
+            translate=(0.1, 0.1),
+            scale=(0.9, 1.1)
+        ),
+        # 将 PIL Image 转换为 FloatTensor 并归一化至 [0.0, 1.0]，同时升维增加 Channel 维度
+        transforms.ToTensor(),
+        # 标准化映射至 [-1.0, 1.0] 区间，加速梯度下降效率
+        transforms.Normalize(mean=[0.5], std=[0.5])
     ])
 
 
 def get_test_transform(image_size: int = 64) -> transforms.Compose:
     """
-    验证集与测试集专用的流水线。
-    【黄金法则】：测试时绝对不能有任何随机性（如旋转缩放），必须原汁原味地喂给模型评估。
+    配置评估流 (验证集/测试集) 的数据流水线。
+
+    【执行约束】：
+    评估阶段必须隔离所有随机干扰因素，确保模型性能验证过程具备严格的客观性与可复现性。
     """
     return transforms.Compose([
-       transforms.Resize((image_size, image_size)),
-       transforms.ToTensor(),
-       transforms.Normalize(mean=[0.5], std=[0.5])
+        transforms.Resize((image_size, image_size)),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.5], std=[0.5])
     ])
 
 
 # ============================================================
-# 4. 数据分发器 (DataLoader) 编排中心
+# 4. 数据迭代器编排系统 (DataLoader Orchestration)
 # ============================================================
 
 def create_dataloaders(
-       data_dir: str,
-       batch_size: int = 128,
-       image_size: int = 64,
-       num_workers: int = 0
+    data_dir: str,
+    batch_size: int = 128,
+    image_size: int = 64,
+    num_workers: int = 0
 ) -> Tuple[DataLoader, DataLoader, DataLoader]:
     """
-    工厂函数：一键生成模型训练所需的三大数据流。
+    数据集聚合与迭代器实例化接口。
 
     参数:
-        data_dir: 包含 train/val/test 的处理后根目录
-        batch_size: 每批次吞吐的样本量 (影响显存/内存占用和梯度平滑度)
-        image_size: 喂入网络的图片尺寸
-        num_workers: 多线程读取数量 (由于我们使用了 RAM 全量缓存，设为 0 即可，多线程反而增加开销)
+        data_dir: 包含标准划分层次 (train/val/test) 的根目录路径
+        batch_size: 批次容量参数 (决定单次参数更新的样本基数与显存占用率)
+        image_size: 统一网络输入的空间分辨率
+        num_workers: 异步数据预取线程数 (当前采用全量内存池设计，配置为 0 以规避进程间通信开销)
     """
-    # 拼装三个子集的绝对路径
     train_dir = os.path.join(data_dir, 'train')
     val_dir = os.path.join(data_dir, 'val')
     test_dir = os.path.join(data_dir, 'test')
 
-    # 初始化 Dataset 沙箱
+    # 初始化 Dataset 实体并挂载相应的数据流管线
     train_dataset = CharacterDataset(train_dir, get_train_transform(image_size), image_size)
     val_dataset = CharacterDataset(val_dir, get_test_transform(image_size), image_size)
     test_dataset = CharacterDataset(test_dir, get_test_transform(image_size), image_size)
 
-    # 包装为可迭代的 DataLoader
-    # 训练集必须打乱 (shuffle=True) 以防止网络记住排序规律
+    # 封装迭代器：训练流必须开启随机重排 (shuffle=True)，以破坏批次间的顺序相关性
     train_loader = DataLoader(
-       train_dataset, batch_size=batch_size, shuffle=True,
-       num_workers=num_workers, pin_memory=False
+        train_dataset, batch_size=batch_size, shuffle=True,
+        num_workers=num_workers, pin_memory=False
     )
-    # 验证集和测试集不需要打乱
+    # 评估流配置为顺序抽取 (shuffle=False)
     val_loader = DataLoader(
-       val_dataset, batch_size=batch_size, shuffle=False,
-       num_workers=num_workers, pin_memory=False
+        val_dataset, batch_size=batch_size, shuffle=False,
+        num_workers=num_workers, pin_memory=False
     )
     test_loader = DataLoader(
-       test_dataset, batch_size=batch_size, shuffle=False,
-       num_workers=num_workers, pin_memory=False
+        test_dataset, batch_size=batch_size, shuffle=False,
+        num_workers=num_workers, pin_memory=False
     )
 
-    print(f"\n✅ 数据集沙箱构建完成：")
-    print(f"  训练集 (Train) : {len(train_dataset)} 张 (开启数据增强随机变异)")
-    print(f"  验证集 (Val)   : {len(val_dataset)} 张 (纯净标准流，用于监控过拟合)")
-    print(f"  测试集 (Test)  : {len(test_dataset)} 张 (纯净标准流，用于最终防作弊盲测)")
+    print(f"\n✅ 数据集迭代器编排完成：")
+    print(f"  Train Loader : {len(train_dataset)} 样本 (已注入随机几何增强策略)")
+    print(f"  Val Loader   : {len(val_dataset)} 样本 (确定性标准推断流)")
+    print(f"  Test Loader  : {len(test_dataset)} 样本 (独立隔离盲测数据流)")
 
     return train_loader, val_loader, test_loader
 
 
 # ============================================================
-# 5. 数据健康度与增强效果可视化监测工具
+# 5. 数据流定性监测与可视化诊断组件
 # ============================================================
 
 def visualize_samples(
-       dataset: Dataset,
-       num_samples: int = 16,
-       save_path: Optional[str] = None
+    dataset: Dataset,
+    num_samples: int = 16,
+    save_path: Optional[str] = None
 ):
     """
-    抽取数据集中的随机样本并绘制成网格图。
-    主要用于在训练前人类用肉眼检查“数据增强是否过于离谱”或“标签是否错位”。
+    抽样数据集内容并渲染特征网格阵列。
+    主要用于在实验前期，定性验证增强策略的空间畸变幅度是否合理，以及标签对齐状态是否健康。
     """
     import matplotlib.pyplot as plt
     import random
     import matplotlib
-    matplotlib.use('Agg') # 强制使用无 GUI 的后端绘制，防止服务器环境下报错
+    matplotlib.use('Agg')  # 绑定非交互式渲染后端，规避 X-Server 依赖引发的运行时异常
 
     fig, axes = plt.subplots(4, 4, figsize=(10, 10))
 
     for i, ax in enumerate(axes.flat):
-       if i >= num_samples: break
+        if i >= num_samples: break
 
-       idx = random.randint(0, len(dataset) - 1)
-       img, label = dataset[idx]
+        idx = random.randint(0, len(dataset) - 1)
+        img, label = dataset[idx]
 
-       # 反归一化：由于前面 Normalize 把数值变成了 [-1, 1]
-       # matplotlib 画图时需要将其恢复为 [0, 1] 的颜色范围，否则画面全黑或报错
-       img = img * 0.5 + 0.5
+        # 逆向标准化：将张量数据由 [-1.0, 1.0] 线性重映射至标准视觉空间 [0.0, 1.0]
+        img = img * 0.5 + 0.5
 
-       # squeeze() 去除 channel 维度：(1, 64, 64) -> (64, 64) 以满足 pyplot 的灰度图要求
-       ax.imshow(img.squeeze().numpy(), cmap='gray')
-       ax.set_title(f'Label: {CLASS_IDX_TO_NAME[label]}')
-       ax.axis('off')
+        # 执行张量降维 (Squeeze): 移除 Channel 维度适配单通道渲染引擎
+        ax.imshow(img.squeeze().numpy(), cmap='gray')
+        ax.set_title(f'Label: {CLASS_IDX_TO_NAME[label]}')
+        ax.axis('off')
 
     plt.tight_layout()
 
     if save_path:
-       plt.savefig(save_path, dpi=150)
-       print(f"样本特征可视化拼图已落盘保存至: {save_path}")
+        plt.savefig(save_path, dpi=150)
+        print(f"定性抽样特征矩阵已输出至指定路径: {save_path}")
     else:
-       plt.show()
+        plt.show()
 
 
 # ============================================================
-# 测试桩 (Mock Test)
-# 当直接运行 `python src/dataset.py` 时执行此代码块进行模块自检
+# 模块级集成自检桩 (Module Test Stub)
 # ============================================================
 if __name__ == "__main__":
     print("=" * 60)
-    print("Dataset & DataLoader 模块自检程序")
+    print("数据加载与增强流水线 - 核心组件冒烟测试")
     print("=" * 60)
 
-    print("\n类别字典双向映射装载成功 (共 62 类).")
+    print("\n类别编码空间实例化完毕 (规模限制: 62 类).")
 
-    # 模拟指向处理好的训练集目录
+    # 指定预处理产出的结构化测试目录
     test_target_dir = "../data/processed/train"
 
     if os.path.exists(test_target_dir):
-       print(f"\n挂载并测试目标目录: {test_target_dir}")
+        print(f"\n尝试挂载测试环境目录: {test_target_dir}")
 
-       # 模拟构建 Dataset
-       test_ds = CharacterDataset(
-           data_dir=test_target_dir,
-           transform=get_train_transform(64)
-       )
+        # 实例化 Dataset 对象以触发内存载入逻辑
+        test_ds = CharacterDataset(
+            data_dir=test_target_dir,
+            transform=get_train_transform(64)
+        )
 
-       print(f"\n整体数据集容量: {len(test_ds)}")
+        print(f"\n数据集总样本负载: {len(test_ds)}")
 
-       # 检查类别分布情况
-       dist_info = test_ds.get_class_distribution()
-       print(f"\n前10个类别的频率直方分布:")
-       for class_id in range(10):
-          count_val = dist_info.get(class_id, 0)
-          print(f"  {CLASS_IDX_TO_NAME[class_id]:>2s} : {count_val:>5d} 张")
+        # 调用分布监测器
+        dist_info = test_ds.get_class_distribution()
+        print(f"\n频次直方分布数据 (Top 10):")
+        for class_id in range(10):
+            count_val = dist_info.get(class_id, 0)
+            print(f"  编码 {class_id:>2d} [{CLASS_IDX_TO_NAME[class_id]:>1s}] : {count_val:>5d} 样本")
 
-       # 抽查样本图像并保存
-       visualize_samples(test_ds, save_path="dataset_augmented_samples.png")
+        # 触发渲染诊断组件
+        visualize_samples(test_ds, save_path="dataset_augmented_samples.png")
     else:
-       print(f"\n[阻断]: 目标训练集目录缺失: {test_target_dir}")
-       print("提示：请先在项目根目录运行 python -m tools.preprocess 准备物理数据")
+        print(f"\n[Error]: 依赖路径断裂 -> {test_target_dir}")
+        print("执行提示：模块自检依赖前置物理文件，需优先执行 tools/preprocess 生成结构化数据。")
 
     print("\n" + "=" * 60)
-    print("模块自检运行完毕！")
+    print("模块自检状态评估完成。")
     print("=" * 60)
