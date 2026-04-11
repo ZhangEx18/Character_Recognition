@@ -35,30 +35,28 @@
 
 本项目采用高度解耦的模块化设计，业务逻辑与底层工具严格分离：
 
-Plaintext
-
-```
+```markdown
 Character_Recognition/
-├── venv/                   # 📦 虚拟环境隔离目录 (Git Ignore)
-├── data/                   # 🗂 数据管理层
+├── venv/                   # 虚拟环境隔离目录 (Git Ignore)
+├── data/                   # 数据管理层
 │   ├── raw/                # 原始数据集 (Raw Assets)
 │   └── processed/          # 归一化后的 64x64 灰度标准数据集
-├── checkpoints/            # 💾 训练快照存档 (包含模型权重及优化器断点状态)
-├── logs/                   # 📈 TensorBoard 训练监控日志
-├── outputs/                # 📊 推理分析结果与深度诊断报告图表
-├── src/                    # 🧠 核心算法包 (Algorithm Core)
+├── checkpoints/            # 训练快照存档 (包含模型权重及优化器断点状态)
+├── logs/                   # TensorBoard 训练监控日志
+├── outputs/                # 推理分析结果与深度诊断报告图表
+├── src/                    # 核心算法包 (Algorithm Core)
 │   ├── __init__.py         # 模块暴露接口与包管理实现
-│   ├── model.py            # CNN 架构库 (SimpleCNN / DetailedCNN / ResNet)
+│   ├── model.py            # CNN 架构库 (CNN / ResNet)
 │   ├── dataset.py          # 数据装载、全量内存缓存与增强流水线
-│   ├── inference.py        # 静态推理引擎 (支持批量预测与 Top-K 分析)
+│   ├── inference.py        # 静态推理引擎 (支持批量预测与Top-K分析)
 │   └── utils.py            # 尺寸推演、可视化绘图与跨平台硬件调度
-├── tools/                  # 🛠 辅助应用工具
-│   ├── camera_app.py       # 实时 OpenCV 视频流监控应用 (支持 iPhone 互通摄像头)
+├── tools/                  # 辅助应用工具
+│   ├── camera_app.py       # 实时 OpenCV 视频流监控应用
 │   ├── eval_matrix.py      # 模型期末考试：生成混淆矩阵与软肋排行榜
 │   └── preprocess.py       # 增量式图像清洗与切分脚本
-├── train.py                # 🚂 训练调度主入口 (Master Entry)
-├── requirements.txt        # 📝 环境依赖 BOM 清单
-└── README.md               # 📖 技术说明文档
+├── train.py                # 训练调度主入口 (Master Entry)
+├── requirements.txt        # 环境依赖 BOM 清单
+└── README.md               # 技术说明文档
 ```
 
 ------
@@ -69,9 +67,7 @@ Character_Recognition/
 
 克隆本仓库后，请在虚拟环境中安装核心依赖：
 
-Bash
-
-```
+```bash
 python -m pip install -r requirements.txt
 ```
 
@@ -79,9 +75,7 @@ python -m pip install -r requirements.txt
 
 执行图像重采样（64x64）、灰度化转换与严格的 Train/Val/Test 物理隔离。系统自带增量缓存机制，将自动跳过已处理素材：
 
-Bash
-
-```
+```bash
 python -m tools.preprocess
 ```
 
@@ -89,9 +83,7 @@ python -m tools.preprocess
 
 系统将自动探测并启用当前机器的最强算力（MPS/CUDA）。您可以通过 `--net` 参数自由切换底层架构模型：
 
-Bash
-
-```
+```bash
 # 启动训练任务 (默认使用 detailed 架构)
 python train.py --net resnet
 
@@ -103,9 +95,7 @@ tensorboard --logdir=logs
 
 提供“静态诊断”与“实时视频流”两种实战模式：
 
-Bash
-
-```
+```bash
 # 模式 A：启动 iPhone / WebCam 实时视频流字符识别
 python -m tools.camera_app --net resnet
 
@@ -119,9 +109,9 @@ python -m src.inference --image data/test.png --net resnet
 
 通过运行 `python -m tools.eval_matrix --net resnet`，系统会在 `outputs/` 目录中生成深度诊断报告，协助您评估模型的真实泛化能力：
 
-- 🎯 **全景混淆矩阵 (Confusion Matrix)**：量化跨类别分类误差，精准定位语义相近字符（如数字 `0` vs 大写字母 `O`，数字 `1` vs 小写字母 `l`）的区分度。
-- 📉 **最易错软肋排行榜 (Weakness Top-K)**：自动提取矩阵中错误率最高的前 15 个字符对，并绘制直观的条形图，指导后续的针对性数据增强。
-- 🔬 **特征图可视化 (Feature Maps)**：提取卷积层内部的激活值，像显微镜一样解析神经网络各阶段的注意力聚焦区域（*由 `utils.py` 提供支持*）。
+- **全景混淆矩阵 (Confusion Matrix)**：量化跨类别分类误差，精准定位语义相近字符（如数字 `0` vs 大写字母 `O`，数字 `1` vs 小写字母 `l`）的区分度。
+- **最易错软肋排行榜 (Weakness Top-K)**：自动提取矩阵中错误率最高的前 15 个字符对，并绘制直观的条形图，指导后续的针对性数据增强。
+- **特征图可视化 (Feature Maps)**：提取卷积层内部的激活值，像显微镜一样解析神经网络各阶段的注意力聚焦区域（*由 `utils.py` 提供支持*）。
 
 ------
 
