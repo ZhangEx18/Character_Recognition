@@ -1,29 +1,57 @@
 """
-主训练入口脚本 (多模型动态切换版)
+主训练入口脚本 (多模型架构配置版)
 
 ============================================================
-【快速启动指南】
-通过终端的 --net 参数，您可以随心所欲地切换三种不同的模型架构：
+【参数配置与执行说明】
+通过命令行参数 `--net` 可指定实例化的模型架构：
 
-1. 快速验证模式 (SimpleCNN)  : python train.py --net simple
-   - 特点：层数最少，速度极快，适合用来跑通数据流或快速找 Bug。
+1. SimpleCNN 模式 : python train.py --net simple
+   - 特点：浅层卷积神经网络，参数量极小，适用于数据流测试与基准验证。
 
-2. 主力训练模式 (DetailedCNN): python train.py --net detailed
-   - 特点：默认选项。带有 BatchNorm 和 Dropout，性能稳健，是交付的主力。
+2. DetailedCNN 模式: python train.py --net detailed
+   - 特点：默认选项。引入 BatchNorm 与 Dropout 层的标准卷积网络，提供稳健的收敛性能。
 
-3. 深度残差模式 (ResNet)     : python train.py --net resnet
-   - 特点：针对 64x64 定制的轻量级残差网络。结构最深，潜力最大。
+3. ResNet 模式    : python train.py --net resnet
+   - 特点：针对 64x64 输入分辨率适配的轻量级残差网络。网络层数较深，特征提取能力更强。
 
-💡 提示：运行结束后，在终端输入 `tensorboard --logdir=logs`，
-即可在浏览器中直观对比这三个模型在同一张图表上的准确率变化曲线！
+💡 提示：训练执行期间或结束后，可通过终端执行 `tensorboard --logdir=logs`
+启动可视化面板，以监控对比各网络结构的 Loss 与 Accuracy 演变趋势。
 ============================================================
 
-【系统功能总览】：
-1. 硬件自适应：自动嗅探并完美调度 Mac MPS (Apple Silicon)、CUDA 或 CPU。
-2. 路径免疫机制：动态计算工程绝对路径，彻底告别 FileNotFoundError 烦恼。
-3. 严格验证隔离：每个 Epoch 独立进行无梯度的验证集测试，严防数据泄露。
-4. 状态持久化：自动拦截并保存拥有最高准确率的 Checkpoint，支持断点续训。
-5. 动态学习率：搭载 ReduceLROnPlateau，在 Loss 进入瓶颈期时自动收缩学习率。
+【全景处理流程】(以 DetailedCNN 模式为例)
+[起点] 终端启动: python train.py --net detailed
+  │
+  ├─ 1. 环境初始化: 探测底层计算硬件 (MPS/CUDA/CPU)，动态计算工程绝对路径
+  ├─ 2. 数据流装载: 挂载预处理后的 Train/Val/Test 数据集 (构建 DataLoader)
+  ├─ 3. 架构实例化: 构建 DetailedCNN 拓扑，初始化损失函数 (带标签平滑) 与优化器 (AdamW)
+  │
+[主循环] 轮次 (Epoch) 迭代训练 (例如 Epoch 1 -> 30)
+  │
+  ├─ [训练阶段] (model.train() 启用计算图与 Dropout/BatchNorm 动态更新)
+  │   ├─ 4. 前向传播: 批量输入 (Batch) 图像张量，网络输出分类预测概率
+  │   ├─ 5. 误差计算: 通过交叉熵函数 (CrossEntropy) 量化预测分布与真实标签的散度
+  │   ├─ 6. 反向传播: 清空历史梯度，基于链式法则计算各项参数对当前误差的梯度
+  │   └─ 7. 参数更新: 优化器依据梯度向量调整网络权重，完成一次学习迭代
+  │
+  ├─ [验证阶段] (model.eval() + torch.no_grad() 冻结网络状态与自动求导引擎)
+  │   └─ 8. 泛化评估: 遍历验证集，计算未参与训练的数据 Loss 与 Accuracy
+  │
+  ├─ [状态调度]
+  │   ├─ 9. 指标监控: 将标量数据 (Loss/Acc/LR) 同步写入 TensorBoard 事件流
+  │   ├─ 10. 学习率干预: 调度器 (Scheduler) 依据验证集 Loss 表现动态触发学习率衰减
+  │   └─ 11. 权重持久化: 若当前准确率达全局最优，序列化保存模型权重与优化器状态 (Checkpoint)
+  │
+[终点] 流水线终止与盲测
+  └──> 12. 加载历史最优权重 (best_model.pth)，在严密隔离的测试集 (Test) 上输出最终泛化指标
+
+============================================================
+
+【系统核心模块总览】：
+1. 硬件加速适配：自动检测并分配至 MPS (Apple Silicon)、CUDA 或 CPU 计算设备。
+2. 动态路径寻址：基于脚本所在目录计算工程绝对路径，避免执行路径差异导致的 I/O 异常。
+3. 验证隔离机制：每个 Epoch 执行无梯度的独立验证阶段，严防训练数据泄露与过拟合。
+4. 状态持久化机制：依据验证集评价指标自动保存最佳模型权重，并保留优化器状态以支持断点续训。
+5. 学习率动态衰减：集成 ReduceLROnPlateau 调度器，在损失函数收敛停滞时自动按比例降低学习率。
 """
 
 import argparse
@@ -40,12 +68,12 @@ from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
 # ============================================================
-# 从核心包 (src) 导入架构组件
+# 架构组件导入
 # ============================================================
 from src import DetailedCNN, SimpleCNN, ResNet, count_parameters, create_dataloaders, get_device
 
 # ============================================================
-# 核心辅助函数：训练与验证的底层逻辑
+# 核心辅助函数：模型前向与反向传播逻辑
 # ============================================================
 
 def train_one_epoch(
@@ -57,55 +85,52 @@ def train_one_epoch(
     epoch: int
 ) -> Tuple[float, float]:
     """
-    执行单个 Epoch (全量数据遍历一次) 的训练过程。
+    执行单个 Epoch (全量训练数据完整遍历一次) 的训练迭代。
 
     【核心机制】：
-    在这个阶段，模型处于“学习状态”，所有的权重参数都会根据损失函数的反馈进行调整。
+    在该阶段，模型计算前向传播误差，并通过反向传播算法更新网络权重参数。
     """
-    # 1. 切换为训练模式。这非常重要，它会激活 Dropout 层（随机丢弃神经元）和
-    # BatchNorm 层（动态计算当前批次的均值和方差），防止模型死记硬背。
+    # 1. 切换至训练模式。此操作将启用 Dropout 层的随机失活机制，
+    # 并激活 BatchNorm 层的批次均值和方差统计更新，从而提升模型泛化能力。
     model.train()
 
     running_loss = 0.0
     correct = 0
     total = 0
 
-    # 遍历数据加载器，每次吐出一小批 (Batch，例如 128 张) 图片和对应的正确答案
+    # 遍历训练数据加载器，按 Batch (例如 128 个样本) 获取输入图像与真实标签
     for batch_idx, (data, target) in enumerate(train_loader):
-        # 将数据搬运到指定的加速硬件上 (如 Mac 的 MPS)
+        # 将张量迁移至指定的加速设备
         data = data.to(device)
         target = target.to(device)
 
-        # 【PyTorch 黄金五步法则】
-        # 第 1 步：清空历史梯度。PyTorch 默认会累加梯度，如果不清零，
-        # 前几次的计算结果会干扰当前批次的更新方向。
+        # 【标准参数优化流程】
+        # 步骤 1：梯度清零。清除前序批次的累积梯度，防止干扰当前优化的计算方向。
         optimizer.zero_grad()
 
-        # 第 2 步：前向传播 (Forward)。让模型看着图片猜答案。
+        # 步骤 2：前向传播 (Forward pass)。获取当前输入在模型下的预测分布。
         output = model(data)
 
-        # 第 3 步：计算损失 (Loss)。用交叉熵函数对比“模型猜的”和“标准答案”之间的差距。
+        # 步骤 3：损失计算 (Loss calculation)。通过目标函数量化预测分布与真实标签的散度。
         loss = criterion(output, target)
 
-        # 第 4 步：反向传播 (Backward)。利用高等代数的链式法则，计算出模型中
-        # 数百万个参数对当前误差的“责任大小”（即梯度）。
+        # 步骤 4：反向传播 (Backward pass)。依据链式法则，计算损失函数对各可学习参数的梯度。
         loss.backward()
 
-        # 第 5 步：权重更新 (Step)。优化器 (如 AdamW) 根据刚才算出的梯度，
-        # 稍微调整一下模型的内部参数，让下一次猜得更准一点。
+        # 步骤 5：参数更新 (Optimization step)。优化算法基于当前梯度调整网络权重。
         optimizer.step()
 
-        # 记录统计数据用于日志打印
+        # 统计批次误差以进行宏观监控
         running_loss += loss.item()
 
-        # output.max(1) 返回每一行最大概率的值及其索引。我们只需要索引（即预测的类别标签）
+        # output.max(1) 返回按行求得的最大概率值及其索引序列。提取索引作为预测类别标签。
         _, predicted = output.max(1)
         total += target.size(0)
 
-        # 统计本批次中猜对的数量 (.eq 就是 equal 判断，.sum 求和)
+        # 统计本批次的预测命中数
         correct += predicted.eq(target).sum().item()
 
-        # 每隔 50 个批次打印一次进度报告，防止终端没有响应让人以为死机了
+        # 周期性输出训练进度日志，监控批次层面的收敛状态
         if batch_idx % 50 == 0:
             acc = 100. * correct / total
             print(f"  Epoch [{epoch}] | Batch {batch_idx:3d}/{len(train_loader)} | "
@@ -123,22 +148,21 @@ def validate(
     criterion: nn.Module
 ) -> Tuple[float, float]:
     """
-    在验证集或测试集上执行结业考试，绝对不更新任何权重。
+    在验证集或测试集上执行模型评估。
 
     【核心机制】：
-    在这个阶段，模型处于“考试状态”，只能调用已有知识作答，不允许翻书学习（更新参数）。
+    在此阶段，冻结所有网络层参数并关闭梯度计算，仅评估当前参数空间分布下的泛化性能。
     """
-    # 1. 切换为评估模式。这会冻结 Dropout (不再丢弃神经元) 和
-    # BatchNorm (使用训练时积累的全局均值和方差)，确保每次考试的条件绝对公平稳定。
+    # 1. 切换至评估模式。此操作将禁用 Dropout 层，并强制 BatchNorm
+    # 使用训练阶段积累的全局移动平均统计量，保证验证过程的确定性。
     model.eval()
 
     running_loss = 0.0
     correct = 0
     total = 0
 
-    # 2. 【极其关键】：上下文管理器 torch.no_grad()
-    # 强制告诉 PyTorch：“接下来发生的所有事情都不要记录计算图”。
-    # 这会直接节省 50% 以上的显存空间，并大幅提升测试速度。
+    # 2. 【显存与计算优化】：使用 torch.no_grad() 上下文管理器。
+    # 屏蔽自动求导引擎 (Autograd)，避免构建计算图，显著降低 VRAM 占用并加速前向推理。
     with torch.no_grad():
         for data, target in val_loader:
             data = data.to(device)
@@ -165,29 +189,29 @@ def save_checkpoint(
     save_dir: str
 ):
     """
-    保存包含优化器状态的全量检查点 (Checkpoint)，支持意外中断后的“断点续训”。
+    序列化保存包含优化器状态的完整检查点 (Checkpoint)，支持意外中断后的无缝恢复。
 
-    【为什么要存 Optimizer？】
-    Adam 等高级优化器内部维护着动量 (Momentum) 和方差等历史状态。如果只存模型权重，
-    中途断电后再恢复训练时，优化器相当于被“洗脑”了，会导致 Loss 突然飙升。
+    【机制说明】：
+    Adam/AdamW 等自适应优化器内部维护有动量 (Momentum) 与方差等历史一阶/二阶矩估计状态。
+    联合保存优化器状态可避免中断恢复时因状态丢失而导致训练前期的 Loss 剧烈震荡。
     """
     Path(save_dir).mkdir(parents=True, exist_ok=True)
 
-    # 将所有必要的状态打包成一个字典
+    # 构建持久化状态字典
     checkpoint = {
         'epoch': epoch,
-        'model_state_dict': model.state_dict(),           # 模型的骨架和肌肉(权重参数)
-        'optimizer_state_dict': optimizer.state_dict(),   # 优化器的记忆(动量等)
-        'best_acc': best_acc                              # 当前的最佳成绩
+        'model_state_dict': model.state_dict(),           # 神经网络层的参数张量
+        'optimizer_state_dict': optimizer.state_dict(),   # 优化器的动量与内部变量状态
+        'best_acc': best_acc                              # 历史监控最优准确率
     }
 
     path = os.path.join(save_dir, f'checkpoint_epoch_{epoch}.pth')
     torch.save(checkpoint, path)
-    print(f"安全快照已存档: {path}")
+    print(f"检查点序列化完成: {path}")
 
 
 # ============================================================
-# 主训练调度逻辑 (Pipeline)
+# 主训练调度逻辑 (Training Pipeline)
 # ============================================================
 
 def train(
@@ -200,122 +224,121 @@ def train(
     checkpoint_dir: str = "checkpoints",
     log_dir: str = "logs"
 ):
-    """执行并统筹完整的模型训练生命周期"""
+    """协调并执行完整的神经网络训练生命周期"""
 
-    # 1. 硬件准备
+    # 1. 硬件资源分配
     device = get_device()
 
-    # 2. TensorBoard 日志记录仪准备
-    # 为每次运行生成带有时间戳的独立日志文件夹，防止被后续运行覆盖
+    # 2. 标量日志记录系统初始化
+    # 基于时间戳生成独立目录，避免多次运行导致的 TensorBoard 事件文件覆写冲突
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     writer = SummaryWriter(os.path.join(log_dir, f"{net_type}_{timestamp}"))
 
-    # 3. 吊起数据流水线，获取打乱的训练流、纯净的验证流和测试流
+    # 3. 初始化数据加载流水线，获取训练集、验证集和独立测试集对应的 DataLoader
     train_loader, val_loader, test_loader = create_dataloaders(
         data_dir=data_dir,
         batch_size=batch_size,
         image_size=image_size
     )
 
-    # 4. 根据用户的指令挂载对应的模型“大脑”
+    # 4. 根据输入配置实例化指定的网络拓扑结构
     if net_type == 'simple':
         model = SimpleCNN(num_classes=62).to(device)
-        print("🔧 已挂载架构: SimpleCNN (简单卷积，适合快速验证)")
+        print("🔧 拓扑实例化完成: SimpleCNN (基准级网络)")
     elif net_type == 'detailed':
         model = DetailedCNN(num_classes=62).to(device)
-        print("⚙️ 已挂载架构: DetailedCNN (带 BatchNorm 的加强版卷积)")
+        print("⚙️ 拓扑实例化完成: DetailedCNN (引入 BatchNorm 等稳健性结构)")
     elif net_type == 'resnet':
         model = ResNet(num_classes=62).to(device)
-        print("🧠 已挂载架构: ResNet (深层残差网络，潜力最大)")
+        print("🧠 拓扑实例化完成: ResNet (深层残差架构)")
     else:
-        raise ValueError(f"未知的网络类型: {net_type}")
+        raise ValueError(f"不受支持的网络架构类型: {net_type}")
 
-    print(f"📊 模型总可训练参数量: {count_parameters(model):,}")
+    print(f"📊 当前模型可训练参数总量: {count_parameters(model):,}")
 
-    # 5. 设定监考官与营养师
-    # 监考官 (损失函数)：使用自带 0.1 标签平滑的交叉熵。
-    # 标签平滑会让模型即使做对了也不会给出 100% 的过度自信，能有效防止过拟合。
+    # 5. 定义损失函数与优化器参数
+    # 损失函数配置：采用带 0.1 标签平滑 (Label Smoothing) 的交叉熵损失。
+    # 标签平滑通过软化目标分布，可有效减轻模型预测过度自信 (Overconfidence)，提升正则化效果。
     criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
 
-    # 营养师 (优化器)：使用 AdamW 优化算法，并加入轻微的权重衰减 (weight_decay=1e-4) 防止模型参数过大。
+    # 优化器配置：采用 AdamW 算法，附加 weight_decay=1e-4 的 L2 正则化项以抑制权重过载膨胀。
     optimizer = optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-4)
 
-    # 动态调参仪 (调度器)：当验证集 Loss 连续 5 次 (patience) 没有下降时，
-    # 自动将学习率砍半 (factor=0.5)，帮助模型进行微调，跳出局部的“浅坑”。
+    # 动态学习率调度策略：监控验证集 Loss。若连续 5 个 Epoch 性能未见改善 (patience=5)，
+    # 则对当前学习率执行系数为 0.5 的收缩，促使模型在局部最优点附近进行精细收敛。
     scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5)
 
     start_epoch = 1
     best_acc = 0.0
 
-    # 6. 正式开始按轮次 (Epoch) 循环训练
+    # 6. 执行主体迭代式训练循环
     for epoch in range(start_epoch, epochs + 1):
         print(f"\n{'='*60}\nEpoch {epoch}/{epochs}\n{'='*60}")
 
-        # 让模型去训练集学习，拿到平时的模拟考成绩
+        # 在训练数据分布上执行参数优化
         t_loss, t_acc = train_one_epoch(model, device, train_loader, optimizer, criterion, epoch)
 
-        # 让模型去验证集考试，拿到严格不透题的成绩
+        # 在同源但相互隔离的验证集上进行泛化误差评估
         v_loss, v_acc = validate(model, device, val_loader, criterion)
 
-        # 将所有的核心指标打点记录到 TensorBoard，用于后续可视化画图
+        # 向 TensorBoard 标量收集器写入当前周期的核心评估指标
         writer.add_scalar('Loss/train', t_loss, epoch)
         writer.add_scalar('Loss/val', v_loss, epoch)
         writer.add_scalar('Accuracy/train', t_acc, epoch)
         writer.add_scalar('Accuracy/val', v_acc, epoch)
-        # 记录当前的学习率大小，方便观察 scheduler 是否触发了衰减
+        # 同步记录当前实际生效的学习率，用于分析 scheduler 的调度频次
         writer.add_scalar('Learning_rate', optimizer.param_groups[0]['lr'], epoch)
 
-        print(f"\n总结: Train Acc {t_acc:.2f}% | Val Acc {v_acc:.2f}% | LR {optimizer.param_groups[0]['lr']:.6f}")
+        print(f"\n周期摘要: Train Acc {t_acc:.2f}% | Val Acc {v_acc:.2f}% | LR {optimizer.param_groups[0]['lr']:.6f}")
 
-        # 让调度器根据这次考试的 Loss 决定要不要收缩学习率
+        # 调度器依据本轮验证集损失指标评估是否需要触发学习率衰减
         scheduler.step(v_loss)
 
-        # 7. 优胜劣汰机制 (模型保存)
-        # 如果这次考试的准确率打破了历史最高记录，立即封存这个版本的模型为 "best_model.pth"
+        # 7. 模型检查点保存策略
+        # 判断当前轮次验证准确率是否突破历史阈值上限，若是，则执行状态缓存
         if v_acc > best_acc:
             best_acc = v_acc
             save_checkpoint(model, optimizer, epoch, best_acc, checkpoint_dir)
 
-            # 这个是不带优化器状态的轻量级版本，专门留给推理端 (inference/camera) 使用
+            # 导出不含优化器状态的精简权重副本，专门供推理环境 (Inference) 加载使用
             torch.save(model.state_dict(), os.path.join(checkpoint_dir, 'best_model.pth'))
-            print(f"  ★ 性能突破！最佳准确率已更新: {best_acc:.2f}%")
+            print(f"  ★ 全局极值更新: 新的最优验证集准确率达 {best_acc:.2f}%")
 
-    # 8. 训练彻底结束后的终极盲测
-    # 重新加载我们在训练过程中保存的那个“巅峰状态”的模型权重
+    # 8. 终期独立测试集评估
+    # 加载系统在历史训练轨迹中截获的具备最强泛化表现的模型权重副本
     best_path = os.path.join(checkpoint_dir, 'best_model.pth')
     if os.path.exists(best_path):
         model.load_state_dict(torch.load(best_path, map_location=device))
 
-    # 去拿测试集 (Test Set) 进行最终测验。
-    # 之前训练时模型从未见过这些图片，哪怕是在验证过程中。这是真正检验实力的时刻。
+    # 在未参与模型任何形式训练或超参数微调的独立测试集上进行最终评价
     final_test_loss, final_test_acc = validate(model, device, test_loader, criterion)
-    print(f"\n{'='*60}\n训练流水线彻底结束 | 最终系统盲测准确率: {final_test_acc:.2f}%\n{'='*60}")
+    print(f"\n{'='*60}\n流水线处理完毕 | 模型独立测试集泛化准确率 (Test-Set Acc): {final_test_acc:.2f}%\n{'='*60}")
 
-    # 关闭日志流
+    # 刷新并关闭事件写入句柄
     writer.close()
 
 
 # ============================================================
-# CLI 命令行入口保护块
+# CLI 入口与配置解析块
 # ============================================================
 
 def main():
-    """解析终端传入的参数并启动系统调度核心"""
-    parser = argparse.ArgumentParser(description='CNN 多模型自由切换训练脚本')
+    """解析命令行参数，构建超参数配置并启动主训练调度流程"""
+    parser = argparse.ArgumentParser(description='卷积神经网络拓扑结构动态评估入口')
 
     parser.add_argument(
         '--net',
         type=str,
         default='detailed',
         choices=['simple', 'detailed', 'resnet'],
-        help='选择要训练的网络架构: simple, detailed, 或 resnet'
+        help='指定实例化的网络架构类别: simple, detailed, 或 resnet'
     )
     args = parser.parse_args()
 
-    # 获取当前执行脚本所在的绝对路径，确保在任何终端目录下运行都不会报“找不到文件”错误
+    # 获取执行脚本的绝对物理路径，作为资源文件的寻址基准点，规避跨目录执行时的异常
     base_dir = os.path.dirname(os.path.abspath(__file__))
 
-    # 组装超级配置字典
+    # 构建统一运行时超参数及路径配置字典
     config = {
         'net_type': args.net,
         'data_dir': os.path.join(base_dir, 'data', 'processed'),
@@ -328,18 +351,17 @@ def main():
     }
 
     print("\n" + "=" * 60)
-    print(f"🚀 CNN 字符识别系统 - 训练启动台 | 当前模式: {args.net.upper()}")
+    print(f"🚀 CNN 字符识别模型训练开始 | 目标配置拓扑: {args.net.upper()}")
     print("=" * 60)
 
-    # 目录健康度检查
+    # 路径级联依赖检查
     if not os.path.exists(config['data_dir']):
-        print(f"\n[致命错误]: 未找到预处理后的数据 -> {config['data_dir']}")
-        print("提示：请先运行 tools/preprocess.py")
+        print(f"\n[Error]: 未识别到预处理数据结构 -> {config['data_dir']}")
+        print("提示：在执行训练流水线前，需确保已完成 tools/preprocess.py 数据清理过程。")
         return
 
-    # 【工程修复】：在此使用 ** 进行字典解包 (Dictionary Unpacking)。
-    # 它等价于自动将字典拆解为: train(net_type='xxx', data_dir='xxx', epochs=30 ...)
-    # 这比写一长串参数传递要优雅和健壮得多。
+    # 【字典解包参数传递】：使用 ** 语法自动展开 config 字典对应的键值对。
+    # 该方式可作为关键字参数传递给目标函数，相较于冗长的显式赋值，具备更高的代码拓展性。
     train(**config)
 
 
