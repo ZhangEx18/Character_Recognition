@@ -130,8 +130,8 @@ def train_one_epoch(
         # 统计本批次的预测命中数
         correct += predicted.eq(target).sum().item()
 
-        # 周期性输出训练进度日志，监控批次层面的收敛状态
-        if batch_idx % 50 == 0:
+        # 周期性输出训练进度日志（跳过 batch 0，避免在训练开始前就打印一次无意义的状态）
+        if batch_idx > 0 and batch_idx % 50 == 0:
             acc = 100. * correct / total
             print(f"  Epoch [{epoch}] | Batch {batch_idx:3d}/{len(train_loader)} | "
                   f"Loss: {loss.item():.4f} | Acc: {acc:.2f}%")

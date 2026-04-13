@@ -24,3 +24,7 @@ __pycache__/
 .DS_Store
 .idea/
 .vscode/
+
+# 6. 运行时生成的临时文件
+_frontend.html
+.tmp/

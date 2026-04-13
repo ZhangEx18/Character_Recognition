@@ -167,8 +167,10 @@ class Predictor:
         probs = result['probabilities']
 
         # argsort() 会将数组从小到大排序并返回索引。
-        # [-k:] 截取最后 k 个（即最大的），[::-1] 将其翻转为从大到小。
-        top_k_indices = probs.argsort()[-k:][::-1]
+        # [::-1] 将其翻转为从大到小，再截取前 k 个（即概率最大的 k 个）。
+        if k <= 0:
+            return []
+        top_k_indices = probs.argsort()[::-1][:k]
 
         return [(idx, CLASS_IDX_TO_NAME[idx], probs[idx]) for idx in top_k_indices]
 

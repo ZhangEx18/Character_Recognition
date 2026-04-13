@@ -261,9 +261,10 @@ class ResNet(nn.Module):
         # 首个 Block 承担潜在的降维任务，后续 Block 维持特征尺度
         strides = [stride] + [1] * (num_blocks - 1)
         layers = []
+        in_channels = self.in_channels
         for s in strides:
-            layers.append(ResidualBlock(self.in_channels, out_channels, s))
-            self.in_channels = out_channels # 迭代更新当前通道状态
+            layers.append(ResidualBlock(in_channels, out_channels, s))
+            in_channels = out_channels  # 仅在当前循环内有效，避免污染 self.in_channels
         return nn.Sequential(*layers)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:

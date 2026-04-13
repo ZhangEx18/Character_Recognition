@@ -101,26 +101,29 @@
 
 ```markdown
 Character_Recognition/
-├── venv/                   # 虚拟环境隔离目录 (Git Ignore)
-├── data/                   # 数据管理层
+├── .tmp/                    # 运行时生成的 HTML 单文件应用 (Git Ignore)
+├── venv/                    # 虚拟环境隔离目录 (Git Ignore)
+├── data/                    # 数据管理层
 │   ├── raw/                # 原始数据集 (Raw Assets)
 │   └── processed/          # 归一化后的 64x64 灰度标准数据集
-├── checkpoints/            # 训练快照存档 (包含模型权重及优化器断点状态)
+├── checkpoints/             # 训练快照存档 (包含模型权重及优化器断点状态)
 ├── logs/                   # TensorBoard 训练监控日志
-├── outputs/                # 推理分析结果与深度诊断报告图表
-├── src/                    # 核心算法包 (Algorithm Core)
+├── outputs/                 # 推理分析结果与深度诊断报告图表
+├── src/                     # 核心算法包 (Algorithm Core)
 │   ├── __init__.py         # 模块暴露接口与包管理实现
-│   ├── model.py            # CNN 架构库 (CNN / ResNet)
+│   ├── model.py            # CNN 架构库 (SimpleCNN / DetailedCNN / ResNet)
 │   ├── dataset.py          # 数据装载、全量内存缓存与增强流水线
 │   ├── inference.py        # 静态推理引擎 (支持批量预测与Top-K分析)
 │   └── utils.py            # 尺寸推演、可视化绘图与跨平台硬件调度
-├── tools/                  # 辅助应用工具
+├── tools/                   # 辅助应用工具
 │   ├── camera_app.py       # 实时 OpenCV 视频流监控应用
 │   ├── eval_matrix.py      # 模型期末考试：生成混淆矩阵与软肋排行榜
 │   └── preprocess.py       # 增量式图像清洗与切分脚本
-├── train.py                # 训练调度主入口 (Master Entry)
-├── requirements.txt        # 环境依赖 BOM 清单
-└── README.md               # 技术说明文档
+├── backend.py               # FastAPI 后端 (提供推理与训练 API)
+├── frontend.py              # 前端单文件 SPA 生成器 + HTTP 服务器
+├── train.py                 # 训练调度主入口 (Master Entry)
+├── requirements.txt         # 环境依赖 BOM 清单
+└── README.md                # 技术说明文档
 ```
 
 ------
@@ -135,21 +138,34 @@ Character_Recognition/
 python -m pip install -r requirements.txt
 ```
 
-### 2. 模型训练
+### 2. 启动前后端服务
 
-系统将自动探测并启用当前机器的最强算力（MPS/CUDA）。您可以通过 `--net` 参数自由切换底层架构模型：
+本项目采用现代化的前后端分离架构：
 
 ```Bash
-# 启动训练任务 (默认使用 detailed 架构)
+# 终端 1：启动 FastAPI 后端 (端口 8000)
+python backend.py
+
+# 终端 2：启动前端 HTTP 服务器 (端口 8501)
+python frontend.py
+# 访问 http://127.0.0.1:8501/ 查看 Neural Dark 主题界面
+```
+
+### 3. 模型训练
+
+系统将自动探测并启用当前机器的最强算力（MPS/CUDA）。可通过 Web 界面或 `--net` 参数自由切换底层架构模型：
+
+```Bash
+# 直接使用命令行训练 (默认使用 detailed 架构)
 python train.py --net resnet
 
 # 开启 TensorBoard 监控大屏 (另起一个终端运行)
 tensorboard --logdir=logs
 ```
 
-### 3. 实战推理模式
+### 4. 实战推理模式
 
-提供“静态诊断”与“实时视频流”两种实战模式：
+提供”静态诊断”与”实时视频流”两种实战模式：
 
 ```Bash
 # 模式 A：启动 iPhone / WebCam 实时视频流字符识别
@@ -161,7 +177,21 @@ python -m src.inference --image data/test.png --net resnet
 
 ------
 
-## 五、 性能诊断与可视化 (Diagnostics)
+## 五、 Neural Dark 前端界面 (Neural Dark UI)
+
+本项目配备现代化深色主题单文件应用（SPA），具备以下特性：
+
+- **Neural Dark 主题**：深邃的神经网络风格配色，带有 Canvas 粒子动画背景
+- **实时训练可视化**：Chart.js 实时绘制训练损失/准确率曲线
+- **模型选择器**：下拉菜单式设计，支持 SimpleCNN / DetailedCNN / ResNet 架构切换
+- **异步训练控制**：通过 FastAPI 后端实现启动/停止/监控训练任务
+- **图片推理**：拖拽或选择图片，实时获取 Top-5 预测结果及置信度
+
+界面入口：`python frontend.py` → http://127.0.0.1:8501/
+
+------
+
+## 六、 性能诊断与可视化 (Diagnostics)
 
 通过运行 `python -m tools.eval_matrix --net resnet`，系统会在 `outputs/` 目录中生成深度诊断报告，协助您评估模型的真实泛化能力：
 
@@ -171,7 +201,7 @@ python -m src.inference --image data/test.png --net resnet
 
 ------
 
-## 六、 未来演进方向 (Future Directions)
+## 七、 未来演进方向 (Future Directions)
 
 随着计算机视觉（CV）领域的快速发展，本项目已预留良好的扩展接口，未来可作为以下前沿技术的基准测试床：
 

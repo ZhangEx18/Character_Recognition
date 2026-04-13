@@ -33,7 +33,6 @@ import torchvision.transforms as transforms
 
 # 导入模型和数据加载
 from src import DetailedCNN, SimpleCNN, ResNet, count_parameters, create_dataloaders, get_device
-from src.model import SimpleCNN as SimpleCNNModel
 
 # ============================================================
 # 应用初始化
@@ -42,7 +41,7 @@ app = FastAPI(title="神经网络字符识别 API", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["http://127.0.0.1:8501", "http://localhost:8501"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -73,34 +72,78 @@ training_thread: Optional[threading.Thread] = None
 # ============================================================
 # 预处理配置
 # ============================================================
-transform = transforms.Compose([
+inference_transform = transforms.Compose([
     transforms.Resize((64, 64)),
+    transforms.Grayscale(num_output_channels=1),
     transforms.ToTensor(),
+    transforms.Normalize(mean=[0.5], std=[0.5]),
 ])
 
 # 类别映射
-char_map = {i: SimpleCNNModel.get_class_name(i) for i in range(62)}
+char_map = {i: SimpleCNN.get_class_name(i) for i in range(62)}
+
+# ============================================================
+# 模型单例（延迟加载）
+# ============================================================
+_model_cache: dict = {}
+
+
+def _get_model(net_type: str = "detailed") -> nn.Module:
+    """获取已加载的模型，不重复加载"""
+    if net_type in _model_cache:
+        return _model_cache[net_type]
+
+    if net_type == "simple":
+        model = SimpleCNN(num_classes=62)
+    elif net_type == "resnet":
+        model = ResNet(num_classes=62)
+    else:
+        model = DetailedCNN(num_classes=62)
+
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    checkpoint_path = os.path.join(base_dir, "checkpoints", "best_model.pth")
+    if os.path.exists(checkpoint_path):
+        state_dict = torch.load(checkpoint_path, map_location="cpu")
+        model.load_state_dict(state_dict)
+        print(f"[Model] 已加载 checkpoint: {checkpoint_path}")
+
+    model.eval()
+    _model_cache[net_type] = model
+    return model
 
 
 # ============================================================
 # 推理接口
 # ============================================================
 @app.post("/predict/")
-async def make_prediction(file: UploadFile = File(...)):
+async def make_prediction(file: UploadFile = File(...), net_type: str = "detailed"):
     """图片推理接口"""
     image_bytes = await file.read()
 
     try:
-        image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+        image = Image.open(io.BytesIO(image_bytes)).convert("L")
+        tensor = inference_transform(image).unsqueeze(0)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"无法解析图像: {e}")
 
-    # TODO: 加载真实模型进行推理
-    # 目前返回占位结果
+    device = get_device()
+    model = _get_model(net_type).to(device)
+    tensor = tensor.to(device)
+
+    with torch.no_grad():
+        output = model(tensor)
+        probs = torch.softmax(output, dim=1)
+        confidence, predicted = probs.max(1)
+
+    class_idx = predicted.item()
     result = {
-        "class": "A",
-        "confidence": 0.99,
-        "model": "loaded_model"
+        "class": char_map[class_idx],
+        "class_idx": class_idx,
+        "confidence": round(confidence.item(), 4),
+        "top_k": [
+            {"class": char_map[idx], "confidence": round(p.item(), 4)}
+            for idx, p in zip(output[0].argsort(descending=True)[:5], probs[0][output[0].argsort(descending=True)[:5]])
+        ]
     }
 
     return {"filename": file.filename, "prediction": result}
