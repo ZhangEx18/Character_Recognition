@@ -43,6 +43,173 @@ import torch.nn.functional as F
 from typing import Tuple
 
 
+# ============================================================
+#  Focal Loss (焦点损失函数)
+# ============================================================
+class FocalLoss(nn.Module):
+    """
+    焦点损失函数 - 专门解决难例挖掘问题
+
+    【核心原理】：
+    标准交叉熵对所有样本一视同仁，而 Focal Loss 引入调制因子 (1 - pt)^gamma：
+    - 简单样本 (pt 接近 1) 被大幅衰减权重
+    - 难例样本 (pt 接近 0) 保持较高权重
+
+    这使得模型在训练时自动把注意力集中在容易认错的"刺头"字符上，
+    特别适合解决 0/O、1/l 这类易混淆字符的分类问题。
+
+    参数:
+        alpha: 正负样本平衡因子 (默认 0.25)
+        gamma: 聚焦因子 (默认 2.0)，值越大越专注难例
+    """
+    def __init__(self, alpha: float = 0.25, gamma: float = 2.0, reduction: str = 'mean'):
+        super(FocalLoss, self).__init__()
+        self.alpha = alpha
+        self.gamma = gamma
+        self.reduction = reduction
+
+    def forward(self, inputs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        # 计算标准交叉熵
+        ce_loss = F.cross_entropy(inputs, targets, reduction='none')
+        # 获取目标类别的概率
+        pt = torch.exp(-ce_loss)
+        # 计算调制因子
+        focal_term = (1 - pt) ** self.gamma
+        # 应用 alpha 平衡和调制因子
+        focal_loss = self.alpha * focal_term * ce_loss
+
+        if self.reduction == 'mean':
+            return focal_loss.mean()
+        elif self.reduction == 'sum':
+            return focal_loss.sum()
+        else:
+            return focal_loss
+
+
+# ============================================================
+#  SE-Block (Squeeze-and-Excitation 注意力机制)
+# ============================================================
+class SEBlock(nn.Module):
+    """
+    通道注意力模块 (Squeeze-and-Excitation Block)
+
+    【核心原理】：
+    人类看字时，注意力是有重点的（比如区分 Q 和 O，人眼会死死盯住右下角那个小尾巴）。
+    SE-Block 让网络自动学习"哪些通道的特征最重要"，给重要的通道特征加高权重，
+    把没用的背景噪声权重降到极低。
+
+    【工作机制】：
+    1. Squeeze (压缩)：全局平均池化，将空间信息压缩为一个通道描述值
+    2. Excitation (激发)：两层全连接网络学习通道间的非线性依赖
+    3. Scale (缩放)：用学到的权重对原始特征图进行通道维度的重新校准
+    """
+    def __init__(self, channels: int, reduction: int = 16):
+        super(SEBlock, self).__init__()
+        # 压缩：全局平均池化，将 H×W 压缩为 1×1
+        self.squeeze = nn.AdaptiveAvgPool2d(1)
+        # 激发：第一层降维 + ReLU，第二层升维 + Sigmoid
+        self.excitation = nn.Sequential(
+            nn.Linear(channels, channels // reduction, bias=False),
+            nn.ReLU(inplace=True),
+            nn.Linear(channels // reduction, channels, bias=False),
+            nn.Sigmoid()
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        batch, channels, _, _ = x.size()
+        # Squeeze: [B, C, H, W] -> [B, C, 1, 1] -> [B, C]
+        y = self.squeeze(x).view(batch, channels)
+        # Excitation: [B, C] -> [B, C]
+        y = self.excitation(y)
+        # Scale: 重新加权到原始特征图
+        y = y.view(batch, channels, 1, 1)
+        return x * y.expand_as(x)
+
+
+class SEResNet(nn.Module):
+    """
+    集成 SE-Block 的 ResNet 变体
+
+    在每个残差块的卷积层之后插入 SE-Block，让网络学会自动判断哪些特征通道更重要，
+    特别适合字符识别这种需要区分细微差异的任务（如 0 vs O，1 vs l）。
+    """
+    def __init__(self, num_classes: int = 62):
+        super(SEResNet, self).__init__()
+        self.in_channels = 32
+
+        # Stem
+        self.conv1 = nn.Conv2d(1, 32, kernel_size=3, stride=1, padding=1, bias=False)
+        self.bn1 = nn.BatchNorm2d(32)
+
+        # SE-ResNet 层组
+        self.layer1 = self._make_layer(32, num_blocks=2, stride=1, use_se=True)
+        self.layer2 = self._make_layer(64, num_blocks=2, stride=2, use_se=True)
+        self.layer3 = self._make_layer(128, num_blocks=2, stride=2, use_se=True)
+        self.layer4 = self._make_layer(256, num_blocks=2, stride=2, use_se=True)
+
+        # 全局池化与分类
+        self.avgpool = nn.AdaptiveAvgPool2d((4, 4))
+        self.fc = nn.Linear(256 * 4 * 4, num_classes)
+
+    def _make_layer(self, out_channels: int, num_blocks: int, stride: int, use_se: bool = True):
+        """构建带有可选 SE-Block 的残差层"""
+        strides = [stride] + [1] * (num_blocks - 1)
+        layers = []
+        in_channels = self.in_channels
+        for s in strides:
+            layers.append(SEResidualBlock(in_channels, out_channels, s, use_se=use_se))
+            in_channels = out_channels
+        return nn.Sequential(*layers)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        out = F.relu(self.bn1(self.conv1(x)))
+        out = self.layer1(out)
+        out = self.layer2(out)
+        out = self.layer3(out)
+        out = self.layer4(out)
+        out = self.avgpool(out)
+        out = out.view(out.size(0), -1)
+        out = self.fc(out)
+        return out
+
+
+class SEResidualBlock(nn.Module):
+    """
+    集成 SE-Block 的残差块
+
+    在主路卷积之后、恒等映射相加之前插入 SE-Block 进行通道注意力校准。
+    """
+    def __init__(self, in_channels: int, out_channels: int, stride: int = 1, use_se: bool = True):
+        super(SEResidualBlock, self).__init__()
+        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=stride, padding=1, bias=False)
+        self.bn1 = nn.BatchNorm2d(out_channels)
+        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=False)
+        self.bn2 = nn.BatchNorm2d(out_channels)
+
+        # SE-Block：通道注意力校准
+        self.se = SEBlock(out_channels, reduction=16) if use_se else None
+
+        # Shortcut
+        self.shortcut = nn.Sequential()
+        if stride != 1 or in_channels != out_channels:
+            self.shortcut = nn.Sequential(
+                nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=stride, bias=False),
+                nn.BatchNorm2d(out_channels)
+            )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        out = F.relu(self.bn1(self.conv1(x)))
+        out = self.bn2(self.conv2(out))
+
+        # 应用 SE-Block 进行通道权重校准
+        if self.se is not None:
+            out = self.se(out)
+
+        out += self.shortcut(x)
+        out = F.relu(out)
+        return out
+
+
 class SimpleCNN(nn.Module):
     """
     基础卷积神经网络架构 (针对 64x64 分辨率优化)

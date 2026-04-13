@@ -213,7 +213,7 @@ def get_train_transform(image_size: int = 64) -> transforms.Compose:
     配置训练流的数据增强级联器。
 
     【增强策略】：
-    通过引入受控的空间几何扰动 (旋转、平移、缩放)，强制网络学习目标的全局拓扑结构特征，
+    通过引入受控的空间几何扰动 (旋转、平移、缩放、随机擦除)，强制网络学习目标的全局拓扑结构特征，
     降低模型对局部像素分布的过度拟合倾向，显著提升泛化鲁棒性。
     """
     return transforms.Compose([
@@ -225,6 +225,15 @@ def get_train_transform(image_size: int = 64) -> transforms.Compose:
             degrees=0,
             translate=(0.1, 0.1),
             scale=(0.9, 1.1)
+        ),
+        # 【新增】随机擦除 (Random Erasing)：
+        # 在图像上随机涂黑一小块区域，逼迫网络不能只靠局部特征（如字母的上半圈）来识别，
+        # 必须学会通过残缺的部分也能认出完整字符。这极大提升对污损、残缺字符的识别能力。
+        transforms.RandomErasing(
+            p=0.3,           # 30% 概率执行擦除
+            scale=(0.02, 0.15),  # 擦除面积占图像的 2%~15%
+            ratio=(0.3, 3.3),    # 擦除区域的宽高比范围
+            value=0          # 擦除后填黑 (0 = 黑色)
         ),
         # 将 PIL Image 转换为 FloatTensor 并归一化至 [0.0, 1.0]，同时升维增加 Channel 维度
         transforms.ToTensor(),

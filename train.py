@@ -14,6 +14,10 @@
 3. ResNet 模式    : python train.py --net resnet
    - 特点：针对 64x64 输入分辨率适配的轻量级残差网络。网络层数较深，特征提取能力更强。
 
+4. SEResNet 模式  : python train.py --net seresnet
+   - 特点：在 ResNet 基础上集成 SE-Block 通道注意力机制，自动学习哪些特征通道更重要。
+           对易混淆字符（0/O、1/l）的区分能力更强。
+
 💡 提示：训练执行期间或结束后，可通过终端执行 `tensorboard --logdir=logs`
 启动可视化面板，以监控对比各网络结构的 Loss 与 Accuracy 演变趋势。
 ============================================================
@@ -63,14 +67,14 @@ from datetime import datetime
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.optim.lr_scheduler import ReduceLROnPlateau
+from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
 # ============================================================
 # 架构组件导入
 # ============================================================
-from src import DetailedCNN, SimpleCNN, ResNet, count_parameters, create_dataloaders, get_device
+from src import DetailedCNN, SimpleCNN, ResNet, SEResNet, FocalLoss, count_parameters, create_dataloaders, get_device
 
 # ============================================================
 # 核心辅助函数：模型前向与反向传播逻辑
@@ -222,7 +226,8 @@ def train(
     learning_rate: float = 0.001,
     image_size: int = 64,
     checkpoint_dir: str = "checkpoints",
-    log_dir: str = "logs"
+    log_dir: str = "logs",
+    loss_type: str = "crossentropy"
 ):
     """协调并执行完整的神经网络训练生命周期"""
 
@@ -251,22 +256,33 @@ def train(
     elif net_type == 'resnet':
         model = ResNet(num_classes=62).to(device)
         print("🧠 拓扑实例化完成: ResNet (深层残差架构)")
+    elif net_type == 'seresnet':
+        model = SEResNet(num_classes=62).to(device)
+        print("🎯 拓扑实例化完成: SEResNet (带 SE-Block 注意力机制的残差网络)")
     else:
         raise ValueError(f"不受支持的网络架构类型: {net_type}")
 
     print(f"📊 当前模型可训练参数总量: {count_parameters(model):,}")
 
-    # 5. 定义损失函数与优化器参数
-    # 损失函数配置：采用带 0.1 标签平滑 (Label Smoothing) 的交叉熵损失。
-    # 标签平滑通过软化目标分布，可有效减轻模型预测过度自信 (Overconfidence)，提升正则化效果。
-    criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
+    # 5. 定义损失函数
+    # 支持两种损失函数：
+    # - crossentropy: 带 0.1 标签平滑的标准交叉熵（默认），减轻模型过度自信
+    # - focal: 焦点损失，自动聚焦难例样本，适合解决 0/O、1/l 易混淆问题
+    if loss_type == 'focal':
+        criterion = FocalLoss(alpha=0.25, gamma=2.0)
+        print("📉 损失函数: Focal Loss (自动聚焦难例样本)")
+    else:
+        criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
+        print("📉 损失函数: CrossEntropyLoss (label_smoothing=0.1)")
 
     # 优化器配置：采用 AdamW 算法，附加 weight_decay=1e-4 的 L2 正则化项以抑制权重过载膨胀。
     optimizer = optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-4)
 
-    # 动态学习率调度策略：监控验证集 Loss。若连续 5 个 Epoch 性能未见改善 (patience=5)，
-    # 则对当前学习率执行系数为 0.5 的收缩，促使模型在局部最优点附近进行精细收敛。
-    scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5)
+    # 动态学习率调度策略：采用余弦退火热重启 (Cosine Annealing with Warm Restarts)。
+    # 学习率会平滑地从初始值下降到极低值，然后突然重启回升。
+    # 这种"海浪式"退火机制能把模型从局部最优的"烂泥潭"里踹出去，帮其找到更好的全局最优解。
+    # T_0=10 表示每 10 个 epoch 完成一个退火周期，T_mult=2 表示后续周期长度翻倍。
+    scheduler = CosineAnnealingWarmRestarts(optimizer, T_0=10, T_mult=2)
 
     start_epoch = 1
     best_acc = 0.0
@@ -291,8 +307,8 @@ def train(
 
         print(f"\n周期摘要: Train Acc {t_acc:.2f}% | Val Acc {v_acc:.2f}% | LR {optimizer.param_groups[0]['lr']:.6f}")
 
-        # 调度器依据本轮验证集损失指标评估是否需要触发学习率衰减
-        scheduler.step(v_loss)
+        # 调度器执行余弦退火调度：按 epoch 周期自动调整学习率
+        scheduler.step()
 
         # 7. 模型检查点保存策略
         # 判断当前轮次验证准确率是否突破历史阈值上限，若是，则执行状态缓存
@@ -330,8 +346,15 @@ def main():
         '--net',
         type=str,
         default='detailed',
-        choices=['simple', 'detailed', 'resnet'],
-        help='指定实例化的网络架构类别: simple, detailed, 或 resnet'
+        choices=['simple', 'detailed', 'resnet', 'seresnet'],
+        help='指定实例化的网络架构类别: simple, detailed, resnet, 或 seresnet (带注意力机制)'
+    )
+    parser.add_argument(
+        '--loss',
+        type=str,
+        default='crossentropy',
+        choices=['crossentropy', 'focal'],
+        help='指定损失函数: crossentropy (默认，带标签平滑) 或 focal (聚焦难例)'
     )
     args = parser.parse_args()
 
@@ -341,6 +364,7 @@ def main():
     # 构建统一运行时超参数及路径配置字典
     config = {
         'net_type': args.net,
+        'loss_type': args.loss,
         'data_dir': os.path.join(base_dir, 'data', 'processed'),
         'epochs': 30,
         'batch_size': 128,
@@ -351,7 +375,7 @@ def main():
     }
 
     print("\n" + "=" * 60)
-    print(f"🚀 CNN 字符识别模型训练开始 | 目标配置拓扑: {args.net.upper()}")
+    print(f"🚀 CNN 字符识别模型训练开始 | 拓扑: {args.net.upper()} | 损失: {args.loss.upper()}")
     print("=" * 60)
 
     # 路径级联依赖检查

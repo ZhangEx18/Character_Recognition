@@ -143,7 +143,6 @@ HTML_CONTENT = """<!DOCTYPE html>
   .drop-zone-text { color: var(--text-secondary); font-size: 0.9rem; }
   .drop-zone-text strong { color: var(--accent-blue); }
   .drop-zone-hint { font-size: 0.75rem; color: var(--text-muted); margin-top: 0.5rem; font-family: var(--font-mono); }
-  #preview-img { max-width: 100%; max-height: 260px; border-radius: var(--radius-md); display: none; margin: 1rem auto; box-shadow: 0 4px 20px rgba(0,0,0,0.4); }
   .model-selector { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.75rem; margin-bottom: 1.25rem; }
   .model-option {
     border: 1px solid var(--border); border-radius: var(--radius-md);
@@ -242,7 +241,6 @@ HTML_CONTENT = """<!DOCTYPE html>
     display: flex; flex-direction: column; overflow: hidden;
   }
   .chart-canvas-container { position: relative; flex: 1; min-height: 0; overflow: hidden; }
-  #training-chart { position: absolute; top: 0; left: 0; width: 100%; height: 340px; display: block; }
   .control-group { margin-bottom: 1.25rem; }
   .control-label { font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.07em; color: var(--text-muted); margin-bottom: 0.5rem; display: block; }
   .control-hint { font-size: 0.7rem; color: var(--text-muted); margin-top: 0.3rem; font-family: var(--font-mono); }
@@ -318,6 +316,10 @@ HTML_CONTENT = """<!DOCTYPE html>
         <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 20V10M6 20V4M18 20v-6"/></svg>
         训练
       </button>
+      <button class="nav-tab" data-tab="completed">
+        <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9 12l2 2 4-4m6 2a9 9 0 1 1-18 0 9 9 0 0 1 18 0z"/></svg>
+        完成
+      </button>
     </div>
 
     <!-- ===== 推理面板 ===== -->
@@ -328,21 +330,15 @@ HTML_CONTENT = """<!DOCTYPE html>
             <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>
             上传图片
           </div>
-          <div class="control-label">选择模型架构</div>
-          <select class="form-select" id="inf-model-select">
-            <option value="detailed" selected>DetailedCNN (4.32M 参数)</option>
-            <option value="simple">SimpleCNN (8.44M 参数)</option>
-            <option value="resnet">ResNet (3.05M 参数)</option>
-          </select>
           <div class="drop-zone" id="drop-zone">
-            <div class="drop-zone-icon">
+            <div class="drop-zone-icon" id="drop-zone-icon">
               <svg width="48" height="48" fill="none" stroke="#8b949e" stroke-width="1.5" viewBox="0 0 24 24"><path d="M4 14.899A7 7 0 1 1 15.1 6.5c-.737.73-1.315 1.52-1.672 2.35a3 3 0 0 1 2.087 1.35L16 11M8 17l-3.5-3.5M12 3v11M3 15h4"/></svg>
             </div>
-            <div class="drop-zone-text">拖拽图片到这里，或 <strong>点击选择文件</strong></div>
-            <div class="drop-zone-hint">支持 JPG, PNG, BMP - 64x64 灰度</div>
+            <div class="drop-zone-text" id="drop-zone-text">拖拽图片到这里，或 <strong>点击选择文件</strong></div>
+            <div class="drop-zone-hint" id="drop-zone-hint">支持 JPG, PNG, BMP - 64x64 灰度</div>
+            <img id="preview-img" alt="preview" style="display:none;max-width:100%;max-height:200px;border-radius:8px;margin-top:1rem;">
             <input type="file" id="file-input" accept="image/*" style="display:none">
           </div>
-          <img id="preview-img" alt="preview">
           <button class="btn btn-primary btn-full" id="predict-btn" disabled style="margin-top:1rem">
             <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
             开始识别
@@ -403,38 +399,25 @@ HTML_CONTENT = """<!DOCTYPE html>
       </div>
 
       <div class="training-grid">
+        <!-- 左侧：模型选择 -->
         <div class="card fade-up">
           <div class="card-title">
-            <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-            训练配置
+            <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9 3H5a2 2 0 0 0-2 2v4m6-6h10a2 2 0 0 1 2 2v4M9 3v18m0 0h10a2 2 0 0 0 2-2V9M9 21H5a2 2 0 0 1-2-2V9m0 0h18"/></svg>
+            训练控制
           </div>
           <div class="control-group">
             <label class="control-label">模型架构</label>
             <select class="form-select" id="train-model-select">
+              <option value="simple" selected>SimpleCNN (8.44M 参数)</option>
               <option value="detailed">DetailedCNN (4.32M 参数)</option>
-              <option value="simple">SimpleCNN (8.44M 参数)</option>
               <option value="resnet">ResNet (3.05M 参数)</option>
             </select>
           </div>
-          <hr class="divider">
           <div class="control-group">
-            <label class="control-label">训练轮次 <span class="range-val" id="epochs-val">30</span></label>
-            <input type="range" id="epochs-slider" min="1" max="100" value="30">
-            <div class="control-hint">当前: <span id="epochs-display">30</span> 轮</div>
-          </div>
-          <div class="control-group">
-            <label class="control-label">批次大小</label>
-            <select class="form-select" id="batch-select">
-              <option value="32">32</option>
-              <option value="64" selected>64</option>
-              <option value="128">128</option>
-              <option value="256">256</option>
+            <label class="control-label">权重文件</label>
+            <select class="form-select">
+              <option>best_model.pth</option>
             </select>
-          </div>
-          <div class="control-group">
-            <label class="control-label">学习率 <span class="range-val" id="lr-val">0.001</span></label>
-            <input type="range" id="lr-slider" min="1" max="5" step="1" value="3">
-            <div class="control-hint" id="lr-display">0.001</div>
           </div>
           <hr class="divider">
           <div style="display:flex;gap:0.75rem;">
@@ -448,32 +431,137 @@ HTML_CONTENT = """<!DOCTYPE html>
           </div>
         </div>
 
-        <div class="chart-wrap fade-up stagger-1">
-          <div class="card-title" style="margin-bottom:1rem">
-            <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M18 9l-5 5-4-4-3 3"/></svg>
-            训练曲线
+        <!-- 右侧：参数配置 -->
+        <div class="card fade-up">
+          <div class="card-title">
+            <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+            训练参数
           </div>
-          <div class="chart-canvas-container">
-            <canvas id="training-chart"></canvas>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;">
+            <div class="control-group">
+              <label class="control-label">训练轮次 <span class="range-val" id="epochs-val">30</span></label>
+              <input type="range" id="epochs-slider" min="1" max="100" value="30">
+              <div class="control-hint">当前: <span id="epochs-display">30</span> 轮</div>
+            </div>
+            <div class="control-group">
+              <label class="control-label">批次大小</label>
+              <select class="form-select" id="batch-select">
+                <option value="32">32</option>
+                <option value="64" selected>64</option>
+                <option value="128">128</option>
+                <option value="256">256</option>
+              </select>
+            </div>
+            <div class="control-group">
+              <label class="control-label">学习率 <span class="range-val" id="lr-val">0.001</span></label>
+              <input type="range" id="lr-slider" min="1" max="5" step="1" value="3">
+              <div class="control-hint" id="lr-display">0.001</div>
+            </div>
+            <div class="control-group" style="display:flex;flex-direction:column;justify-content:flex-end;">
+              <div class="control-label">优化器</div>
+              <div style="font-size:0.8rem;color:var(--text-secondary);padding:0.4rem 0;">AdamW + ReduceLROnPlateau</div>
+            </div>
           </div>
-          <div id="realtime-metrics" style="display:none;margin-top:1rem;">
-            <hr class="divider">
-            <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:1rem;text-align:center;">
-              <div>
-                <div style="font-size:1.1rem;font-weight:700;font-family:var(--font-mono);color:var(--accent-blue);" id="rt-train-loss">---</div>
-                <div style="font-size:0.65rem;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-muted);margin-top:0.2rem;">训练 Loss</div>
+        </div>
+      </div>
+
+      <!-- 实时训练图表 -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;margin-top:1.5rem;">
+        <div class="chart-wrap" style="height:320px;min-height:320px;">
+          <div class="card-title" style="margin-bottom:0.75rem;">
+            <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"/></svg>
+            准确率曲线
+          </div>
+          <div style="height:240px;position:relative;">
+            <canvas id="training-acc-chart" style="position:absolute;top:0;left:0;width:100%;height:240px;display:block;"></canvas>
+          </div>
+        </div>
+        <div class="chart-wrap" style="height:320px;min-height:320px;">
+          <div class="card-title" style="margin-bottom:0.75rem;">
+            <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M13 17h8m0 0V9m0 8l-8-8-4 4-6-6"/></svg>
+            损失曲线
+          </div>
+          <div style="height:240px;position:relative;">
+            <canvas id="training-loss-chart" style="position:absolute;top:0;left:0;width:100%;height:240px;display:block;"></canvas>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== 完成面板 ===== -->
+    <div class="panel" id="panel-completed">
+      <div class="card fade-up" style="margin-bottom:1.5rem;">
+        <div class="card-title">
+          <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9 12l2 2 4-4m6 2a9 9 0 1 1-18 0 9 9 0 0 1 18 0z"/></svg>
+          训练结果总览
+        </div>
+        <div id="completed-empty" class="empty-state">
+          <div class="empty-state-icon">
+            <svg width="40" height="40" fill="none" stroke="#484f58" stroke-width="1.5" viewBox="0 0 24 24"><path d="M9 12l2 2 4-4m6 2a9 9 0 1 1-18 0 9 9 0 0 1 18 0z"/></svg>
+          </div>
+          <div class="empty-state-title">暂无训练记录</div>
+          <div class="empty-state-desc">请先完成一次训练任务</div>
+        </div>
+        <div id="completed-content" style="display:none;">
+          <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:1rem;margin-bottom:1.5rem;">
+            <div class="metric-card">
+              <div class="metric-value success" id="c-best-acc">---</div>
+              <div class="metric-label">最佳准确率</div>
+            </div>
+            <div class="metric-card">
+              <div class="metric-value accent" id="c-net-type">---</div>
+              <div class="metric-label">模型架构</div>
+            </div>
+            <div class="metric-card">
+              <div class="metric-value neutral" id="c-epochs">---</div>
+              <div class="metric-label">训练轮次</div>
+            </div>
+            <div class="metric-card">
+              <div class="metric-value warning" id="c-final-acc">---</div>
+              <div class="metric-label">最终验证 Acc</div>
+            </div>
+          </div>
+          <!-- 左右两个图表 -->
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;margin-bottom:1.5rem;">
+            <div class="chart-wrap" style="height:360px;min-height:360px;">
+              <div class="card-title" style="margin-bottom:0.75rem;font-size:0.7rem;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--text-muted);display:flex;align-items:center;gap:0.5rem;">
+                <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"/></svg>
+                准确率曲线
               </div>
-              <div>
-                <div style="font-size:1.1rem;font-weight:700;font-family:var(--font-mono);color:var(--text-secondary);" id="rt-val-loss">---</div>
-                <div style="font-size:0.65rem;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-muted);margin-top:0.2rem;">验证 Loss</div>
+              <div class="chart-canvas-container" style="height:280px;flex:1;min-height:0;">
+                <canvas id="completed-acc-chart"></canvas>
               </div>
-              <div>
-                <div style="font-size:1.1rem;font-weight:700;font-family:var(--font-mono);color:var(--accent-green);" id="rt-train-acc">---</div>
-                <div style="font-size:0.65rem;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-muted);margin-top:0.2rem;">训练 Acc</div>
+            </div>
+            <div class="chart-wrap" style="height:360px;min-height:360px;">
+              <div class="card-title" style="margin-bottom:0.75rem;font-size:0.7rem;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--text-muted);display:flex;align-items:center;gap:0.5rem;">
+                <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M13 17h8m0 0V9m0 8l-8-8-4 4-6-6"/></svg>
+                损失曲线
               </div>
-              <div>
-                <div style="font-size:1.1rem;font-weight:700;font-family:var(--font-mono);color:var(--accent-amber);" id="rt-val-acc">---</div>
-                <div style="font-size:0.65rem;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-muted);margin-top:0.2rem;">验证 Acc</div>
+              <div class="chart-canvas-container" style="height:280px;flex:1;min-height:0;">
+                <canvas id="completed-loss-chart"></canvas>
+              </div>
+            </div>
+          </div>
+          <!-- 诊断图片 -->
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;">
+            <div class="card" style="padding:1rem;">
+              <div class="card-title" style="margin-bottom:0.75rem;">
+                <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9 19v-6a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2zM17 9V5a2 2 0 0 0-2-2H9a2 2 0 0 0-2 2v4"/></svg>
+                混淆矩阵
+              </div>
+              <img id="confusion-matrix-img" style="width:100%;border-radius:8px;display:none;" alt="混淆矩阵">
+              <div id="confusion-empty" class="empty-state" style="padding:1.5rem;">
+                <div class="empty-state-title" style="font-size:0.8rem;">无可用数据</div>
+              </div>
+            </div>
+            <div class="card" style="padding:1rem;">
+              <div class="card-title" style="margin-bottom:0.75rem;">
+                <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+                最易错字符 Top-15
+              </div>
+              <img id="weaknesses-img" style="width:100%;border-radius:8px;display:none;" alt="弱点排行">
+              <div id="weaknesses-empty" class="empty-state" style="padding:1.5rem;">
+                <div class="empty-state-title" style="font-size:0.8rem;">无可用数据</div>
               </div>
             </div>
           </div>
@@ -552,9 +640,10 @@ HTML_CONTENT = """<!DOCTYPE html>
 
 /* State */
 var BACKEND = 'http://127.0.0.1:8000';
-var currentModel = 'detailed';
+var currentModel = 'simple';
 var trainingInterval = null;
-var chartInstance = null;
+var trainingAccChart = null;
+var trainingLossChart = null;
 var uploadedFile = null;
 var trainingHistory = [];
 
@@ -568,8 +657,7 @@ document.querySelectorAll('.nav-tab').forEach(function(tab) {
   });
 });
 
-/* Model selector - 使用下拉菜单 */
-document.getElementById('inf-model-select').addEventListener('change', function(e) { currentModel = e.target.value; });
+/* Model selector - 推理面板使用默认模型，训练面板可切换 */
 document.getElementById('train-model-select').addEventListener('change', function(e) { currentModel = e.target.value; });
 
 /* Char grid */
@@ -614,6 +702,9 @@ function handleFile(file) {
   reader.onload = function(e) {
     previewImg.src = e.target.result;
     previewImg.style.display = 'block';
+    document.getElementById('drop-zone-icon').style.display = 'none';
+    document.getElementById('drop-zone-text').style.display = 'none';
+    document.getElementById('drop-zone-hint').style.display = 'none';
     predictBtn.disabled = false;
     document.getElementById('result-empty').style.display = 'block';
     document.getElementById('result-content').classList.remove('show');
@@ -630,7 +721,7 @@ predictBtn.addEventListener('click', function() {
   var form = new FormData();
   form.append('file', uploadedFile);
 
-  fetch(BACKEND + '/predict/?net_type=' + encodeURIComponent(currentModel), { method: 'POST', body: form })
+  fetch(BACKEND + '/predict/', { method: 'POST', body: form })
     .then(function(res) { return res.json(); })
     .then(function(data) {
       showResult(data.prediction);
@@ -753,96 +844,91 @@ function pollTraining() {
     } else {
       startBtn.disabled = false;
       stopBtn.disabled = true;
-      if (status.status === 'completed') toast('训练完成!', 'success');
+      if (status.status === 'completed') {
+        toast('训练完成!', 'success');
+        showCompletedPanel(status, metrics);
+      }
       else if (status.status === 'error') toast('训练出错', 'error');
     }
   })
   .catch(function() {});
 }
 
-function updateTrainingUI(status, statusData, metrics) {
-  if (!status) return;
-  var labels = { idle: '空闲', running: '训练中', completed: '已完成', stopped: '已停止', error: '出错' };
-  document.getElementById('m-status').textContent = labels[status] || status;
+function showCompletedPanel(status, metrics) {
+  document.getElementById('completed-empty').style.display = 'none';
+  document.getElementById('completed-content').style.display = 'block';
 
-  var dot = document.getElementById('status-dot');
-  if (status === 'running' && statusData) {
-    dot.className = 'status-dot training';
-    document.getElementById('progress-wrap').style.display = 'block';
-    var p = (statusData.epoch / (statusData.epochs || 1)) * 100;
-    document.getElementById('progress-bar').style.width = p + '%';
-    document.getElementById('realtime-metrics').style.display = 'block';
-  } else {
-    dot.className = (status === 'completed') ? 'status-dot connected' : 'status-dot';
-    document.getElementById('progress-wrap').style.display = 'none';
-    document.getElementById('realtime-metrics').style.display = 'none';
-  }
+  var history = metrics.history || [];
+  if (history.length === 0) return;
 
-  if (metrics && typeof metrics === 'object') {
-    var epoch = metrics.epoch !== undefined ? metrics.epoch : 0;
-    var epochs = metrics.epochs !== undefined ? metrics.epochs : 1;
-    document.getElementById('m-epoch').textContent = epoch + ' / ' + epochs;
-    document.getElementById('m-acc').textContent = metrics.best_acc > 0 ? metrics.best_acc.toFixed(2) + '%' : '---';
-    document.getElementById('m-lr').textContent = metrics.lr ? metrics.lr.toFixed(4) : '---';
-    if (metrics.train_loss !== undefined) document.getElementById('rt-train-loss').textContent = metrics.train_loss.toFixed(4);
-    if (metrics.val_loss !== undefined) document.getElementById('rt-val-loss').textContent = metrics.val_loss.toFixed(4);
-    if (metrics.train_acc !== undefined) document.getElementById('rt-train-acc').textContent = metrics.train_acc.toFixed(1) + '%';
-    if (metrics.val_acc !== undefined) document.getElementById('rt-val-acc').textContent = metrics.val_acc.toFixed(1) + '%';
-  }
-}
-
-/* Chart */
-function getChartWidth() {
-  var canvas = document.getElementById('training-chart');
-  var container = canvas.parentElement;
-  var w = container.clientWidth;
-  if (!w || w < 100 || w > 5000) w = 800;
-  return w;
-}
-
-function updateChart(history) {
-  var canvas = document.getElementById('training-chart');
-  if (!history || history.length === 0) return;
+  document.getElementById('c-best-acc').textContent = metrics.best_acc ? metrics.best_acc.toFixed(2) + '%' : '---';
+  document.getElementById('c-net-type').textContent = status.net_type || '---';
+  document.getElementById('c-epochs').textContent = (metrics.epochs || 0) + ' 轮';
+  var last = history[history.length - 1];
+  document.getElementById('c-final-acc').textContent = last && last.val_acc ? last.val_acc.toFixed(2) + '%' : '---';
 
   var epochs = history.map(function(h) { return h.epoch; });
-  var trainLoss = history.map(function(h) { return h.train_loss; });
-  var valLoss = history.map(function(h) { return h.val_loss; });
-  var trainAcc = history.map(function(h) { return h.train_acc; });
-  var valAcc = history.map(function(h) { return h.val_acc; });
+  var chartW = Math.min(getChartWidth(), 900);
 
-  var chartW = getChartWidth();
-  canvas.style.height = '340px';
-  canvas.style.width = chartW + 'px';
-  canvas.height = 340;
-  canvas.width = chartW;
-
-  if (chartInstance) {
-    chartInstance.data.labels = epochs;
-    chartInstance.data.datasets[0].data = trainLoss;
-    chartInstance.data.datasets[1].data = valLoss;
-    chartInstance.data.datasets[2].data = trainAcc;
-    chartInstance.data.datasets[3].data = valAcc;
-    chartInstance.resize(chartW, 340);
-    chartInstance.update('none');
-    return;
-  }
-
-  chartInstance = new Chart(canvas, {
+  // 准确率图表
+  var accCanvas = document.getElementById('completed-acc-chart');
+  accCanvas.style.height = '280px';
+  accCanvas.style.width = chartW + 'px';
+  accCanvas.height = 280;
+  accCanvas.width = chartW;
+  new Chart(accCanvas, {
     type: 'line',
     data: {
       labels: epochs,
       datasets: [
-        { label: '训练损失', data: trainLoss, borderColor: '#38bdf8', backgroundColor: 'rgba(56,189,248,0.05)', borderWidth: 2, pointRadius: 3, pointBackgroundColor: '#38bdf8', tension: 0.4, fill: true },
-        { label: '验证损失', data: valLoss, borderColor: '#8b949e', backgroundColor: 'transparent', borderWidth: 2, pointRadius: 3, pointBackgroundColor: '#8b949e', tension: 0.4, borderDash: [4, 4] },
-        { label: '训练准确率', data: trainAcc, borderColor: '#4ade80', backgroundColor: 'rgba(74,222,128,0.05)', borderWidth: 2, pointRadius: 3, pointBackgroundColor: '#4ade80', tension: 0.4, fill: true },
-        { label: '验证准确率', data: valAcc, borderColor: '#fbbf24', backgroundColor: 'transparent', borderWidth: 2, pointRadius: 3, pointBackgroundColor: '#fbbf24', tension: 0.4, borderDash: [4, 4] }
+        { label: '训练准确率', data: history.map(function(h) { return h.train_acc; }), borderColor: '#4ade80', backgroundColor: 'rgba(74,222,128,0.08)', borderWidth: 2, pointRadius: 3, pointBackgroundColor: '#4ade80', tension: 0.4, fill: true },
+        { label: '验证准确率', data: history.map(function(h) { return h.val_acc; }), borderColor: '#fbbf24', backgroundColor: 'rgba(251,191,36,0.08)', borderWidth: 2, pointRadius: 3, pointBackgroundColor: '#fbbf24', tension: 0.4, borderDash: [4, 4] }
       ]
     },
     options: {
       responsive: false,
       maintainAspectRatio: false,
       animation: { duration: 0 },
-      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: {
+          position: 'top',
+          labels: { color: '#8b949e', font: { family: 'Inter, system-ui', size: 11 }, usePointStyle: true, pointStyleWidth: 12, padding: 16 }
+        },
+        tooltip: {
+          backgroundColor: 'rgba(13,17,23,0.95)',
+          borderColor: 'rgba(48,54,61,0.8)',
+          borderWidth: 1,
+          titleColor: '#e6edf3',
+          bodyColor: '#8b949e',
+          padding: 10
+        }
+      },
+      scales: {
+        x: { title: { display: true, text: '训练轮次', color: '#484f58', font: { family: 'Inter', size: 11 } }, grid: { color: 'rgba(48,54,61,0.4)' }, ticks: { color: '#484f58', size: 10 } },
+        y: { title: { display: false }, grid: { color: 'rgba(48,54,61,0.4)' }, ticks: { color: '#484f58', size: 10 }, min: 0, max: 100 }
+      }
+    }
+  });
+
+  // 损失图表
+  var lossCanvas = document.getElementById('completed-loss-chart');
+  lossCanvas.style.height = '280px';
+  lossCanvas.style.width = chartW + 'px';
+  lossCanvas.height = 280;
+  lossCanvas.width = chartW;
+  new Chart(lossCanvas, {
+    type: 'line',
+    data: {
+      labels: epochs,
+      datasets: [
+        { label: '训练损失', data: history.map(function(h) { return h.train_loss; }), borderColor: '#38bdf8', backgroundColor: 'rgba(56,189,248,0.08)', borderWidth: 2, pointRadius: 3, pointBackgroundColor: '#38bdf8', tension: 0.4, fill: true },
+        { label: '验证损失', data: history.map(function(h) { return h.val_loss; }), borderColor: '#8b949e', backgroundColor: 'transparent', borderWidth: 2, pointRadius: 3, pointBackgroundColor: '#8b949e', tension: 0.4, borderDash: [4, 4] }
+      ]
+    },
+    options: {
+      responsive: false,
+      maintainAspectRatio: false,
+      animation: { duration: 0 },
       plugins: {
         legend: {
           position: 'top',
@@ -863,6 +949,178 @@ function updateChart(history) {
       }
     }
   });
+
+  // 尝试加载诊断图片
+  var netType = (status.net_type || 'RESNET').toUpperCase();
+  var timestamp = new Date().toISOString().slice(0,10).replace(/-/g,'');
+  var possiblePaths = [
+    'Diagnosis_' + netType + '_' + timestamp + '_001106',
+    'Diagnosis_' + netType + '_' + timestamp + '_134228',
+    'Diagnosis_RESNET_20260411_001106',
+    'Diagnosis_RESNET_20260411_134228'
+  ];
+
+  var loadedImg = 0;
+  function checkDone() { loadedImg++; if (loadedImg >= 2) {} }
+
+  function tryLoadConfusion(path) {
+    var img = document.getElementById('confusion-matrix-img');
+    img.src = BACKEND + '/outputs/' + path + '/confusion_matrix_full.png';
+    img.onload = function() { img.style.display = 'block'; document.getElementById('confusion-empty').style.display = 'none'; checkDone(); };
+    img.onerror = function() { checkDone(); };
+  }
+
+  function tryLoadWeaknesses(path) {
+    var img = document.getElementById('weaknesses-img');
+    img.src = BACKEND + '/outputs/' + path + '/top_weaknesses_chart.png';
+    img.onload = function() { img.style.display = 'block'; document.getElementById('weaknesses-empty').style.display = 'none'; checkDone(); };
+    img.onerror = function() { checkDone(); };
+  }
+
+  tryLoadConfusion(possiblePaths[0]);
+  tryLoadWeaknesses(possiblePaths[0]);
+
+  // 切换到完成标签
+  document.querySelectorAll('.nav-tab').forEach(function(t) { t.classList.remove('active'); });
+  document.querySelectorAll('.panel').forEach(function(p) { p.classList.remove('active'); });
+  document.querySelector('[data-tab="completed"]').classList.add('active');
+  document.getElementById('panel-completed').classList.add('active');
+}
+
+function updateTrainingUI(status, statusData, metrics) {
+  if (!status) return;
+  var labels = { idle: '空闲', running: '训练中', completed: '已完成', stopped: '已停止', error: '出错' };
+  document.getElementById('m-status').textContent = labels[status] || status;
+
+  var dot = document.getElementById('status-dot');
+  if (status === 'running' && statusData) {
+    dot.className = 'status-dot training';
+    document.getElementById('progress-wrap').style.display = 'block';
+    var p = (statusData.epoch / (statusData.epochs || 1)) * 100;
+    document.getElementById('progress-bar').style.width = p + '%';
+  } else {
+    dot.className = (status === 'completed') ? 'status-dot connected' : 'status-dot';
+    document.getElementById('progress-wrap').style.display = 'none';
+  }
+
+  if (metrics && typeof metrics === 'object') {
+    var epoch = metrics.epoch !== undefined ? metrics.epoch : 0;
+    var epochs = metrics.epochs !== undefined ? metrics.epochs : 1;
+    document.getElementById('m-epoch').textContent = epoch + ' / ' + epochs;
+    document.getElementById('m-acc').textContent = metrics.best_acc > 0 ? metrics.best_acc.toFixed(2) + '%' : '---';
+    document.getElementById('m-lr').textContent = metrics.lr ? metrics.lr.toFixed(4) : '---';
+  }
+}
+
+function getChartWidth() {
+  var canvas = document.getElementById('completed-acc-chart');
+  if (!canvas) return 800;
+  var container = canvas.parentElement;
+  var w = container ? container.clientWidth : 0;
+  if (!w || w < 100 || w > 5000) w = 800;
+  return w;
+}
+
+/* Chart */
+function getChartWidth() {
+  var canvas = document.getElementById('training-acc-chart');
+  if (!canvas) return 800;
+  var container = canvas.parentElement ? canvas.parentElement.parentElement : null;
+  var w = container ? container.clientWidth : 0;
+  if (!w || w < 100 || w > 5000) w = 800;
+  return w;
+}
+
+function updateChart(history) {
+  if (!history || history.length === 0) return;
+
+  var epochs = history.map(function(h) { return h.epoch; });
+  var trainAcc = history.map(function(h) { return h.train_acc; });
+  var valAcc = history.map(function(h) { return h.val_acc; });
+  var trainLoss = history.map(function(h) { return h.train_loss; });
+  var valLoss = history.map(function(h) { return h.val_loss; });
+
+  var chartW = Math.min(getChartWidth(), 800);
+
+  // 准确率图表
+  var accCanvas = document.getElementById('training-acc-chart');
+  accCanvas.width = chartW;
+  accCanvas.height = 240;
+
+  if (trainingAccChart) {
+    trainingAccChart.data.labels = epochs;
+    trainingAccChart.data.datasets[0].data = trainAcc;
+    trainingAccChart.data.datasets[1].data = valAcc;
+    trainingAccChart.resize(chartW, 240);
+    trainingAccChart.update('none');
+  } else {
+    trainingAccChart = new Chart(accCanvas, {
+      type: 'line',
+      data: {
+        labels: epochs,
+        datasets: [
+          { label: '训练准确率', data: trainAcc, borderColor: '#4ade80', backgroundColor: 'rgba(74,222,128,0.08)', borderWidth: 2, pointRadius: 3, pointBackgroundColor: '#4ade80', tension: 0.4, fill: true },
+          { label: '验证准确率', data: valAcc, borderColor: '#fbbf24', backgroundColor: 'rgba(251,191,36,0.08)', borderWidth: 2, pointRadius: 3, pointBackgroundColor: '#fbbf24', tension: 0.4, borderDash: [4, 4] }
+        ]
+      },
+      options: {
+        responsive: false,
+        maintainAspectRatio: false,
+        animation: { duration: 0 },
+        plugins: {
+          legend: {
+            position: 'top',
+            labels: { color: '#8b949e', font: { family: 'Inter, system-ui', size: 10 }, usePointStyle: true, pointStyleWidth: 10, padding: 12 }
+          },
+          tooltip: { backgroundColor: 'rgba(13,17,23,0.95)', borderColor: 'rgba(48,54,61,0.8)', borderWidth: 1, titleColor: '#e6edf3', bodyColor: '#8b949e', padding: 8 }
+        },
+        scales: {
+          x: { title: { display: true, text: '轮次', color: '#484f58', font: { family: 'Inter', size: 10 } }, grid: { color: 'rgba(48,54,61,0.3)' }, ticks: { color: '#484f58', size: 9 } },
+          y: { title: { display: false }, grid: { color: 'rgba(48,54,61,0.3)' }, ticks: { color: '#484f58', size: 9 }, min: 0, max: 100 }
+        }
+      }
+    });
+  }
+
+  // 损失图表
+  var lossCanvas = document.getElementById('training-loss-chart');
+  lossCanvas.width = chartW;
+  lossCanvas.height = 240;
+
+  if (trainingLossChart) {
+    trainingLossChart.data.labels = epochs;
+    trainingLossChart.data.datasets[0].data = trainLoss;
+    trainingLossChart.data.datasets[1].data = valLoss;
+    trainingLossChart.resize(chartW, 240);
+    trainingLossChart.update('none');
+  } else {
+    trainingLossChart = new Chart(lossCanvas, {
+      type: 'line',
+      data: {
+        labels: epochs,
+        datasets: [
+          { label: '训练损失', data: trainLoss, borderColor: '#38bdf8', backgroundColor: 'rgba(56,189,248,0.08)', borderWidth: 2, pointRadius: 3, pointBackgroundColor: '#38bdf8', tension: 0.4, fill: true },
+          { label: '验证损失', data: valLoss, borderColor: '#8b949e', backgroundColor: 'transparent', borderWidth: 2, pointRadius: 3, pointBackgroundColor: '#8b949e', tension: 0.4, borderDash: [4, 4] }
+        ]
+      },
+      options: {
+        responsive: false,
+        maintainAspectRatio: false,
+        animation: { duration: 0 },
+        plugins: {
+          legend: {
+            position: 'top',
+            labels: { color: '#8b949e', font: { family: 'Inter, system-ui', size: 10 }, usePointStyle: true, pointStyleWidth: 10, padding: 12 }
+          },
+          tooltip: { backgroundColor: 'rgba(13,17,23,0.95)', borderColor: 'rgba(48,54,61,0.8)', borderWidth: 1, titleColor: '#e6edf3', bodyColor: '#8b949e', padding: 8 }
+        },
+        scales: {
+          x: { title: { display: true, text: '轮次', color: '#484f58', font: { family: 'Inter', size: 10 } }, grid: { color: 'rgba(48,54,61,0.3)' }, ticks: { color: '#484f58', size: 9 } },
+          y: { title: { display: false }, grid: { color: 'rgba(48,54,61,0.3)' }, ticks: { color: '#484f58', size: 9 } }
+        }
+      }
+    });
+  }
 }
 
 /* Toast */
@@ -892,51 +1150,6 @@ function checkBackend() {
 }
 checkBackend();
 setInterval(checkBackend, 15000);
-
-/* Init empty chart - 预创建 4 个空 datasets，后续 updateChart 直接复用 */
-(function initEmptyChart() {
-  var canvas = document.getElementById('training-chart');
-  var chartW = getChartWidth();
-  canvas.style.height = '340px';
-  canvas.style.width = chartW + 'px';
-  canvas.height = 340;
-  canvas.width = chartW;
-  chartInstance = new Chart(canvas, {
-    type: 'line',
-    data: {
-      labels: [],
-      datasets: [
-        { label: '训练损失', data: [], borderColor: '#38bdf8', backgroundColor: 'rgba(56,189,248,0.05)', borderWidth: 2, pointRadius: 3, pointBackgroundColor: '#38bdf8', tension: 0.4, fill: true },
-        { label: '验证损失', data: [], borderColor: '#8b949e', backgroundColor: 'transparent', borderWidth: 2, pointRadius: 3, pointBackgroundColor: '#8b949e', tension: 0.4, borderDash: [4, 4] },
-        { label: '训练准确率', data: [], borderColor: '#4ade80', backgroundColor: 'rgba(74,222,128,0.05)', borderWidth: 2, pointRadius: 3, pointBackgroundColor: '#4ade80', tension: 0.4, fill: true },
-        { label: '验证准确率', data: [], borderColor: '#fbbf24', backgroundColor: 'transparent', borderWidth: 2, pointRadius: 3, pointBackgroundColor: '#fbbf24', tension: 0.4, borderDash: [4, 4] }
-      ]
-    },
-    options: {
-      responsive: false,
-      maintainAspectRatio: false,
-      animation: { duration: 0 },
-      plugins: {
-        legend: {
-          position: 'top',
-          labels: { color: '#8b949e', font: { family: 'Inter, system-ui', size: 11 }, usePointStyle: true, pointStyleWidth: 12, padding: 16 }
-        },
-        tooltip: {
-          backgroundColor: 'rgba(13,17,23,0.95)',
-          borderColor: 'rgba(48,54,61,0.8)',
-          borderWidth: 1,
-          titleColor: '#e6edf3',
-          bodyColor: '#8b949e',
-          padding: 10
-        }
-      },
-      scales: {
-        x: { title: { display: true, text: '训练轮次', color: '#484f58', font: { family: 'Inter', size: 11 } }, grid: { color: 'rgba(48,54,61,0.4)' }, ticks: { color: '#484f58', size: 10 } },
-        y: { title: { display: false }, grid: { color: 'rgba(48,54,61,0.4)' }, ticks: { color: '#484f58', size: 10 } }
-      }
-    }
-  });
-})();
 </script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 </body>

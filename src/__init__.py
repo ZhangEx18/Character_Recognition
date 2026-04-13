@@ -14,7 +14,7 @@ __version__ = "1.0.0"
 # ============================================================
 
 # 1. 模型架构库：提供从快速验证到深层残差的三阶模型引擎及参数分析工具
-from .model import DetailedCNN, SimpleCNN, ResNet, count_parameters
+from .model import DetailedCNN, SimpleCNN, ResNet, SEResNet, FocalLoss, count_parameters
 
 # 2. 数据与映射字典：负责物理文件调度、预处理增强及全局类别常量 (共 62 类)
 from .dataset import (
@@ -41,6 +41,8 @@ __all__ = [
     "DetailedCNN",
     "SimpleCNN",
     "ResNet",
+    "SEResNet",
+    "FocalLoss",
     "count_parameters",
 
     # 数据集相关

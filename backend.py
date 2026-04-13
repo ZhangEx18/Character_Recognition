@@ -7,6 +7,7 @@ FastAPI 后端 - 神经网络字符识别平台
 - GET  /train/status/ - 获取训练状态
 - GET  /train/metrics/ - 获取训练指标
 - POST /train/stop/ - 停止训练
+- GET  /outputs/ - 获取诊断图片
 """
 
 #  uv run uvicorn backend:app --reload --port 8000
@@ -46,6 +47,20 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ============================================================
+# 静态文件服务
+# ============================================================
+from starlette.responses import FileResponse
+
+@app.get("/outputs/{filename}")
+async def serve_output_file(filename: str):
+    """提供 outputs 目录下的诊断图片"""
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    file_path = os.path.join(base_dir, "outputs", filename)
+    if not os.path.isfile(file_path):
+        raise HTTPException(status_code=404, detail="文件不存在")
+    return FileResponse(file_path)
 
 # ============================================================
 # 训练状态管理
@@ -88,27 +103,25 @@ char_map = {i: SimpleCNN.get_class_name(i) for i in range(62)}
 _model_cache: dict = {}
 
 
-def _get_model(net_type: str = "detailed") -> nn.Module:
-    """获取已加载的模型，不重复加载"""
-    if net_type in _model_cache:
-        return _model_cache[net_type]
+def _get_model() -> nn.Module:
+    """获取推理用模型，始终使用 best_model.pth"""
+    if "inference" in _model_cache:
+        return _model_cache["inference"]
 
-    if net_type == "simple":
-        model = SimpleCNN(num_classes=62)
-    elif net_type == "resnet":
-        model = ResNet(num_classes=62)
-    else:
-        model = DetailedCNN(num_classes=62)
+    model = DetailedCNN(num_classes=62)
 
     base_dir = os.path.dirname(os.path.abspath(__file__))
     checkpoint_path = os.path.join(base_dir, "checkpoints", "best_model.pth")
     if os.path.exists(checkpoint_path):
-        state_dict = torch.load(checkpoint_path, map_location="cpu")
-        model.load_state_dict(state_dict)
-        print(f"[Model] 已加载 checkpoint: {checkpoint_path}")
+        try:
+            state_dict = torch.load(checkpoint_path, map_location="cpu")
+            model.load_state_dict(state_dict)
+            print(f"[Model] 已加载 checkpoint: {checkpoint_path}")
+        except RuntimeError as e:
+            print(f"[Model] checkpoint 与 {net_type} 不匹配，跳过加载，使用随机权重: {e}")
 
     model.eval()
-    _model_cache[net_type] = model
+    _model_cache["inference"] = model
     return model
 
 
@@ -116,8 +129,8 @@ def _get_model(net_type: str = "detailed") -> nn.Module:
 # 推理接口
 # ============================================================
 @app.post("/predict/")
-async def make_prediction(file: UploadFile = File(...), net_type: str = "detailed"):
-    """图片推理接口"""
+async def make_prediction(file: UploadFile = File(...)):
+    """图片推理接口 - 始终使用 best_model.pth"""
     image_bytes = await file.read()
 
     try:
@@ -127,7 +140,7 @@ async def make_prediction(file: UploadFile = File(...), net_type: str = "detaile
         raise HTTPException(status_code=400, detail=f"无法解析图像: {e}")
 
     device = get_device()
-    model = _get_model(net_type).to(device)
+    model = _get_model().to(device)
     tensor = tensor.to(device)
 
     with torch.no_grad():
@@ -141,8 +154,8 @@ async def make_prediction(file: UploadFile = File(...), net_type: str = "detaile
         "class_idx": class_idx,
         "confidence": round(confidence.item(), 4),
         "top_k": [
-            {"class": char_map[idx], "confidence": round(p.item(), 4)}
-            for idx, p in zip(output[0].argsort(descending=True)[:5], probs[0][output[0].argsort(descending=True)[:5]])
+            {"class": char_map[idx], "confidence": round(probs[0][idx].item(), 4)}
+            for idx in output[0].argsort(descending=True)[:5].tolist()
         ]
     }
 
