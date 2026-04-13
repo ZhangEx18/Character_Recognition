@@ -1,64 +1,331 @@
-from fastapi import FastAPI, UploadFile, File
-import uvicorn
-from PIL import Image
+"""
+FastAPI 后端 - 神经网络字符识别平台
+
+提供以下接口：
+- POST /predict/ - 图片推理
+- POST /train/start/ - 启动异步训练
+- GET  /train/status/ - 获取训练状态
+- GET  /train/metrics/ - 获取训练指标
+- POST /train/stop/ - 停止训练
+"""
+
 import io
+import sys
+import threading
+import os
+from datetime import datetime
+from typing import Optional
 
-# 假设您使用 PyTorch
-# import torch
-# import torchvision.transforms as transforms
-# from your_model_file import YourModelClass
+# 添加项目根目录到 Python 路径
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-app = FastAPI()
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from PIL import Image
+from torch.optim.lr_scheduler import ReduceLROnPlateau
+from torch.utils.data import DataLoader
+import torchvision.transforms as transforms
+
+# 导入模型和数据加载
+from src import DetailedCNN, SimpleCNN, ResNet, count_parameters, create_dataloaders, get_device
+from src.model import SimpleCNN as SimpleCNNModel
+
+# ============================================================
+# 应用初始化
+# ============================================================
+app = FastAPI(title="神经网络字符识别 API", version="1.0.0")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ============================================================
+# 训练状态管理
+# ============================================================
+training_state = {
+    "status": "idle",  # idle | running | completed | stopped
+    "net_type": "detailed",
+    "epoch": 0,
+    "epochs": 30,
+    "train_loss": 0.0,
+    "val_loss": 0.0,
+    "train_acc": 0.0,
+    "val_acc": 0.0,
+    "lr": 0.001,
+    "best_acc": 0.0,
+    "start_time": None,
+    "history": [],  # 用于存储训练历史 [{epoch, train_loss, val_loss, train_acc, val_acc}, ...]
+}
+
+training_lock = threading.Lock()
+training_thread: Optional[threading.Thread] = None
 
 
-# ==========================================
-# 1. 加载您的真实模型 (伪代码示例)
-# ==========================================
-# model = YourModelClass()
-# model.load_state_dict(torch.load("character_recognition_weights.pth"))
-# model.eval() # 设置为推理模式
+# ============================================================
+# 预处理配置
+# ============================================================
+transform = transforms.Compose([
+    transforms.Resize((64, 64)),
+    transforms.ToTensor(),
+])
 
-# 定义预处理步骤
-# transform = transforms.Compose([
-#     transforms.Resize((28, 28)), # 根据您的模型输入修改
-#     transforms.ToTensor(),
-# ])
+# 类别映射
+char_map = {i: SimpleCNNModel.get_class_name(i) for i in range(62)}
 
+
+# ============================================================
+# 推理接口
+# ============================================================
 @app.post("/predict/")
 async def make_prediction(file: UploadFile = File(...)):
-	# 读取二进制文件流
-	image_bytes = await file.read()
+    """图片推理接口"""
+    image_bytes = await file.read()
 
-	# ==========================================
-	# 2. 将字节流转换为 PIL 图像对象
-	# ==========================================
-	try:
-		# convert("RGB") 确保图像通道一致，如果是灰度图可改为 "L"
-		image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-	except Exception as e:
-		return {"error": f"无法解析图像: {e}"}
+    try:
+        image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"无法解析图像: {e}")
 
-	# ==========================================
-	# 3. 预处理与真实推理 (伪代码示例)
-	# ==========================================
-	# input_tensor = transform(image).unsqueeze(0) # 增加 batch 维度
-	# with torch.no_grad():
-	#     output = model(input_tensor)
-	#     _, predicted = torch.max(output, 1)
-	#     class_id = predicted.item()
+    # TODO: 加载真实模型进行推理
+    # 目前返回占位结果
+    result = {
+        "class": "A",
+        "confidence": 0.99,
+        "model": "loaded_model"
+    }
 
-	# 映射字典：将类别 ID 映射为真实的字符
-	# char_map = {0: 'A', 1: 'B', 2: 'C'}
-	# recognized_char = char_map.get(class_id, "Unknown")
-
-	# 这里我们暂时依然用一个占位符，等您把上面的注释代码替换为您自己的逻辑
-	result = {
-		"class": "A",  # 替换为 recognized_char
-		"confidence": 0.99
-	}
-
-	return {"filename": file.filename, "prediction": result}
+    return {"filename": file.filename, "prediction": result}
 
 
+# ============================================================
+# 训练接口
+# ============================================================
+@app.post("/train/start/")
+async def start_training(
+    net_type: str = "detailed",
+    epochs: int = 30,
+    batch_size: int = 128,
+    learning_rate: float = 0.001,
+    data_dir: str = "data/processed"
+):
+    """启动异步训练任务"""
+    global training_thread
+
+    if training_state["status"] == "running":
+        raise HTTPException(status_code=400, detail="训练已在进行中")
+
+    # 验证模型类型
+    if net_type not in ["simple", "detailed", "resnet"]:
+        raise HTTPException(status_code=400, detail=f"不支持的模型类型: {net_type}")
+
+    # 重置训练状态
+    with training_lock:
+        training_state["status"] = "running"
+        training_state["net_type"] = net_type
+        training_state["epoch"] = 0
+        training_state["epochs"] = epochs
+        training_state["train_loss"] = 0.0
+        training_state["val_loss"] = 0.0
+        training_state["train_acc"] = 0.0
+        training_state["val_acc"] = 0.0
+        training_state["lr"] = learning_rate
+        training_state["best_acc"] = 0.0
+        training_state["start_time"] = datetime.now().isoformat()
+        training_state["history"] = []
+
+    # 获取基础目录
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    data_path = os.path.join(base_dir, data_dir)
+    checkpoint_dir = os.path.join(base_dir, "checkpoints")
+    log_dir = os.path.join(base_dir, "logs")
+
+    # 启动训练线程
+    training_thread = threading.Thread(
+        target=_train_model,
+        args=(net_type, data_path, epochs, batch_size, learning_rate, checkpoint_dir, log_dir)
+    )
+    training_thread.daemon = True
+    training_thread.start()
+
+    return {"message": "训练已启动", "config": {
+        "net_type": net_type,
+        "epochs": epochs,
+        "batch_size": batch_size,
+        "learning_rate": learning_rate
+    }}
+
+
+def _train_model(
+    net_type: str,
+    data_dir: str,
+    epochs: int,
+    batch_size: int,
+    learning_rate: float,
+    checkpoint_dir: str,
+    log_dir: str
+):
+    """后台训练函数 (在独立线程中运行)"""
+    global training_state
+
+    try:
+        device = get_device()
+
+        # 加载数据
+        train_loader, val_loader, test_loader = create_dataloaders(
+            data_dir=data_dir,
+            batch_size=batch_size,
+            image_size=64
+        )
+
+        # 创建模型
+        if net_type == "simple":
+            model = SimpleCNN(num_classes=62).to(device)
+        elif net_type == "detailed":
+            model = DetailedCNN(num_classes=62).to(device)
+        else:  # resnet
+            model = ResNet(num_classes=62).to(device)
+
+        criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
+        optimizer = optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-4)
+        scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5)
+
+        best_acc = 0.0
+
+        for epoch in range(1, epochs + 1):
+            # 检查是否被停止
+            with training_lock:
+                if training_state["status"] == "stopped":
+                    break
+
+            # 训练一个 epoch
+            model.train()
+            running_loss = 0.0
+            correct = 0
+            total = 0
+
+            for batch_idx, (data, target) in enumerate(train_loader):
+                data, target = data.to(device), target.to(device)
+                optimizer.zero_grad()
+                output = model(data)
+                loss = criterion(output, target)
+                loss.backward()
+                optimizer.step()
+
+                running_loss += loss.item()
+                _, predicted = output.max(1)
+                total += target.size(0)
+                correct += predicted.eq(target).sum().item()
+
+            train_loss = running_loss / len(train_loader)
+            train_acc = 100. * correct / total
+
+            # 验证
+            model.eval()
+            val_loss = 0.0
+            val_correct = 0
+            val_total = 0
+
+            with torch.no_grad():
+                for data, target in val_loader:
+                    data, target = data.to(device), target.to(device)
+                    output = model(data)
+                    loss = criterion(output, target)
+                    val_loss += loss.item()
+                    _, predicted = output.max(1)
+                    val_total += target.size(0)
+                    val_correct += predicted.eq(target).sum().item()
+
+            val_loss = val_loss / len(val_loader)
+            val_acc = 100. * val_correct / val_total
+
+            # 更新状态
+            with training_lock:
+                training_state["epoch"] = epoch
+                training_state["train_loss"] = train_loss
+                training_state["val_loss"] = val_loss
+                training_state["train_acc"] = train_acc
+                training_state["val_acc"] = val_acc
+                training_state["lr"] = optimizer.param_groups[0]['lr']
+                training_state["history"].append({
+                    "epoch": epoch,
+                    "train_loss": train_loss,
+                    "val_loss": val_loss,
+                    "train_acc": train_acc,
+                    "val_acc": val_acc
+                })
+
+            # 调度器
+            scheduler.step(val_loss)
+
+            # 保存最佳模型
+            if val_acc > best_acc:
+                best_acc = val_acc
+                training_state["best_acc"] = best_acc
+                os.makedirs(checkpoint_dir, exist_ok=True)
+                torch.save(model.state_dict(), os.path.join(checkpoint_dir, 'best_model.pth'))
+
+        # 训练完成
+        with training_lock:
+            training_state["status"] = "completed"
+
+    except Exception as e:
+        with training_lock:
+            training_state["status"] = "error"
+            training_state["error"] = str(e)
+
+
+@app.get("/train/status/")
+async def get_training_status():
+    """获取训练状态"""
+    with training_lock:
+        return {
+            "status": training_state["status"],
+            "net_type": training_state["net_type"],
+            "epoch": training_state["epoch"],
+            "epochs": training_state["epochs"],
+            "best_acc": training_state["best_acc"],
+            "start_time": training_state["start_time"]
+        }
+
+
+@app.get("/train/metrics/")
+async def get_training_metrics():
+    """获取训练指标"""
+    with training_lock:
+        return {
+            "epoch": training_state["epoch"],
+            "epochs": training_state["epochs"],
+            "train_loss": training_state["train_loss"],
+            "val_loss": training_state["val_loss"],
+            "train_acc": training_state["train_acc"],
+            "val_acc": training_state["val_acc"],
+            "lr": training_state["lr"],
+            "best_acc": training_state["best_acc"],
+            "history": training_state["history"]
+        }
+
+
+@app.post("/train/stop/")
+async def stop_training():
+    """停止训练"""
+    with training_lock:
+        if training_state["status"] != "running":
+            raise HTTPException(status_code=400, detail="当前没有训练在进行")
+        training_state["status"] = "stopped"
+
+    return {"message": "训练已停止"}
+
+
+# ============================================================
+# 启动入口
+# ============================================================
 if __name__ == "__main__":
-	uvicorn.run(app, host="127.0.0.1", port=8000)
+    import uvicorn
+    uvicorn.run(app, host="127.0.0.1", port=8000)
