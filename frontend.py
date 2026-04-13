@@ -1,12 +1,13 @@
 """
 Streamlit 前端 - 神经网络字符识别平台
 
-现代化 UI/UX 设计：
-- 深色科技风格主题
-- 流畅的动画和过渡
-- Plotly 交互图表
+参考 MotherDuck 设计风格：
+- 配色: #fafafa 背景, #2d2d2d 文本, #3b82f6 强调色
+- 字体: system-ui, -apple-system, sans-serif
+- 卡片: 轻微边框 + 柔和阴影, 8px 圆角
+- 布局: 清晰的网格系统, 充足的留白
 """
-
+#  uv run streamlit run frontend.py --server.port 8501
 import streamlit as st
 import requests
 import plotly.graph_objects as go
@@ -24,223 +25,297 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# 自定义 CSS - 深色科技风格
+# MotherDuck 风格 CSS
 st.markdown("""
 <style>
-    /* 全局样式 */
+    /* ===== 基础变量 - MotherDuck 配色 ===== */
+    :root {
+        --bg-primary: #f8f9fa;
+        --bg-secondary: #ffffff;
+        --bg-tertiary: #e9ecef;
+        --text-primary: #1a1a2e;
+        --text-secondary: #495057;
+        --text-muted: #6c757d;
+        --border: #dee2e6;
+        --border-hover: #ced4da;
+        --accent: #4263eb;
+        --accent-hover: #364fc7;
+        --accent-soft: #edf2ff;
+        --success: #2f9e44;
+        --warning: #f08c00;
+        --error: #e03131;
+        --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.08);
+        --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.1);
+        --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.12);
+        --radius-sm: 6px;
+        --radius-md: 10px;
+        --radius-lg: 16px;
+    }
+
+    /* ===== 全局样式 ===== */
     .stApp {
-        background: linear-gradient(135deg, #0f0f23 0%, #1a1a2e 50%, #16213e 100%);
-        color: #ffffff;
+        background: var(--bg-primary);
+        color: var(--text-primary);
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
     }
 
-    /* 主标题 */
+    /* ===== 主标题 ===== */
     .main-header {
-        font-family: 'Orbitron', 'Rajdhani', 'Segoe UI', sans-serif;
-        font-size: 2.8rem;
-        font-weight: 700;
-        background: linear-gradient(90deg, #00d4ff, #7c3aed, #00d4ff);
-        background-size: 200% auto;
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        animation: shine 3s linear infinite;
-        text-align: center;
-        margin-bottom: 0.5rem;
-    }
-
-    @keyframes shine {
-        to { background-position: 200% center; }
-    }
-
-    .subtitle {
-        text-align: center;
-        color: #94a3b8;
-        font-size: 1rem;
-        margin-bottom: 2rem;
-    }
-
-    /* 卡片样式 */
-    .card {
-        background: rgba(30, 41, 59, 0.8);
-        backdrop-filter: blur(10px);
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        border-radius: 16px;
-        padding: 24px;
-        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
-    }
-
-    .card-glow {
-        position: relative;
-        overflow: hidden;
-    }
-
-    .card-glow::before {
-        content: '';
-        position: absolute;
-        top: -50%;
-        left: -50%;
-        width: 200%;
-        height: 200%;
-        background: radial-gradient(circle, rgba(0, 212, 255, 0.1) 0%, transparent 70%);
-        animation: pulse 4s ease-in-out infinite;
-    }
-
-    @keyframes pulse {
-        0%, 100% { opacity: 0.5; transform: scale(1); }
-        50% { opacity: 1; transform: scale(1.1); }
-    }
-
-    /* 指标卡片 */
-    .metric-card {
-        background: linear-gradient(135deg, rgba(30, 41, 59, 0.9), rgba(15, 23, 42, 0.9));
-        border: 1px solid rgba(0, 212, 255, 0.3);
-        border-radius: 12px;
-        padding: 20px;
-        text-align: center;
-        transition: all 0.3s ease;
-    }
-
-    .metric-card:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 12px 40px rgba(0, 212, 255, 0.2);
-        border-color: rgba(0, 212, 255, 0.6);
-    }
-
-    .metric-value {
-        font-family: 'JetBrains Mono', 'SF Mono', monospace;
         font-size: 2rem;
         font-weight: 700;
-        color: #00d4ff;
-        text-shadow: 0 0 20px rgba(0, 212, 255, 0.5);
+        color: var(--text-primary);
+        letter-spacing: -0.03em;
+        margin-bottom: 0.35rem;
+        line-height: 1.2;
     }
 
-    .metric-label {
-        font-size: 0.85rem;
-        color: #94a3b8;
-        margin-top: 8px;
+    .main-subtitle {
+        font-size: 1rem;
+        color: var(--text-secondary);
+        font-weight: 400;
+        margin-bottom: 2rem;
+        letter-spacing: 0.01em;
+    }
+
+    /* ===== 卡片组件 ===== */
+    .card {
+        background: var(--bg-secondary);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-lg);
+        padding: 1.5rem;
+        box-shadow: var(--shadow-sm);
+        transition: all 0.25s ease;
+    }
+
+    .card:hover {
+        box-shadow: var(--shadow-md);
+        border-color: var(--border-hover);
+    }
+
+    /* ===== Section 标题 ===== */
+    .section-title {
+        font-size: 0.8rem;
+        font-weight: 700;
+        color: var(--text-primary);
         text-transform: uppercase;
-        letter-spacing: 1px;
+        letter-spacing: 0.08em;
+        margin-bottom: 1rem;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
     }
 
-    /* Tab 样式 */
+    /* ===== Tab 样式 ===== */
     .stTabs [data-baseweb="tab-list"] {
-        gap: 8px;
-        background: rgba(30, 41, 59, 0.5);
-        padding: 8px;
-        border-radius: 12px;
+        gap: 4px;
+        background: transparent;
+        border-bottom: 2px solid var(--border);
+        padding-bottom: 0;
     }
 
     .stTabs [data-baseweb="tab"] {
         background: transparent;
-        border-radius: 8px;
-        padding: 14px 28px;
-        font-weight: 600;
-        font-size: 1rem;
-        color: #94a3b8;
         border: none;
-        transition: all 0.3s ease;
+        border-bottom: 3px solid transparent;
+        padding: 0.875rem 1.5rem;
+        font-weight: 600;
+        font-size: 0.95rem;
+        color: var(--text-muted);
+        transition: all 0.2s ease;
+        margin-bottom: -2px;
     }
 
     .stTabs [data-baseweb="tab"]:hover {
-        background: rgba(0, 212, 255, 0.1);
-        color: #00d4ff;
+        color: var(--text-primary);
+        background: transparent;
     }
 
     .stTabs [data-baseweb="tab"][aria-selected="true"] {
-        background: linear-gradient(135deg, #7c3aed, #00d4ff);
-        color: white;
-        box-shadow: 0 4px 20px rgba(124, 58, 237, 0.4);
+        color: var(--accent);
+        background: transparent;
+        border-bottom-color: var(--accent);
     }
 
-    /* 按钮样式 */
+    /* ===== 按钮样式 ===== */
     .stButton > button {
-        background: linear-gradient(135deg, #7c3aed, #00d4ff);
-        border: none;
-        border-radius: 10px;
-        padding: 12px 24px;
-        font-weight: 600;
+        background: var(--accent);
         color: white;
-        transition: all 0.3s ease;
-        box-shadow: 0 4px 15px rgba(124, 58, 237, 0.3);
+        border: none;
+        border-radius: var(--radius-md);
+        padding: 0.75rem 1.5rem;
+        font-weight: 600;
+        font-size: 0.95rem;
+        transition: all 0.2s ease;
+        box-shadow: 0 2px 8px rgba(66, 99, 235, 0.3);
     }
 
     .stButton > button:hover {
+        background: var(--accent-hover);
+        box-shadow: 0 4px 16px rgba(66, 99, 235, 0.4);
         transform: translateY(-2px);
-        box-shadow: 0 8px 25px rgba(124, 58, 237, 0.5);
+    }
+
+    .stButton > button:active {
+        transform: translateY(0);
     }
 
     .stButton > button:disabled {
-        background: #475569;
-        box-shadow: none;
+        background: var(--border);
+        color: var(--text-muted);
         transform: none;
+        box-shadow: none;
     }
 
-    /* 进度条 */
-    .stProgress > div > div > div > div {
-        background: linear-gradient(90deg, #7c3aed, #00d4ff, #7c3aed);
-        background-size: 200% 100%;
-        animation: gradient 2s linear infinite;
+    /* ===== 表单控件 ===== */
+    .stSelectbox > div > div,
+    .stSlider > div > div,
+    .stNumberInput > div > div {
+        background: var(--bg-secondary) !important;
+        border: 1px solid var(--border) !important;
+        border-radius: var(--radius-md) !important;
     }
 
-    @keyframes gradient {
-        0% { background-position: 0% 50%; }
-        100% { background-position: 200% 50%; }
+    .stSlider [data-baseweb="slider"] {
+        color: var(--accent);
     }
 
-    /* 下拉框/选择器 */
-    .stSelectbox > div > div, .stSlider > div > div {
-        background: rgba(30, 41, 59, 0.8) !important;
-        border: 1px solid rgba(255, 255, 255, 0.1) !important;
-        border-radius: 8px !important;
+    /* ===== 指标卡片 ===== */
+    .metric-card {
+        background: var(--bg-secondary);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-lg);
+        padding: 1.25rem 1.5rem;
+        box-shadow: var(--shadow-sm);
+        transition: all 0.25s ease;
     }
 
-    /* 分隔线 */
+    .metric-card:hover {
+        box-shadow: var(--shadow-md);
+        transform: translateY(-2px);
+    }
+
+    .metric-value {
+        font-size: 1.75rem;
+        font-weight: 700;
+        color: var(--text-primary);
+        line-height: 1.2;
+        font-variant-numeric: tabular-nums;
+    }
+
+    .metric-label {
+        font-size: 0.75rem;
+        font-weight: 600;
+        color: var(--text-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        margin-top: 0.5rem;
+    }
+
+    .metric-accent {
+        color: var(--accent);
+    }
+
+    /* ===== 进度条 ===== */
+    .stProgress > div > div > div {
+        background: linear-gradient(90deg, var(--accent) 0%, #5c7cfa 100%);
+        border-radius: 4px;
+    }
+
+    /* ===== 分隔线 ===== */
     hr {
         border: none;
         height: 1px;
-        background: linear-gradient(90deg, transparent, rgba(0, 212, 255, 0.3), transparent);
+        background: linear-gradient(90deg, transparent, var(--border), transparent);
         margin: 1.5rem 0;
     }
 
-    /* 模型选择卡片 */
-    .model-option {
-        background: rgba(30, 41, 59, 0.6);
-        border: 2px solid rgba(255, 255, 255, 0.1);
-        border-radius: 12px;
-        padding: 16px;
-        margin: 8px 0;
-        cursor: pointer;
-        transition: all 0.3s ease;
+    /* ===== 信息提示 ===== */
+    .stAlert {
+        border-radius: var(--radius-md);
+        border: none;
     }
 
-    .model-option:hover {
-        border-color: rgba(0, 212, 255, 0.5);
-        background: rgba(0, 212, 255, 0.05);
+    /* ===== 图表容器 ===== */
+    .chart-container {
+        background: var(--bg-secondary);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-lg);
+        padding: 1.5rem;
+        box-shadow: var(--shadow-md);
     }
 
-    .model-option.selected {
-        border-color: #00d4ff;
-        background: rgba(0, 212, 255, 0.1);
-        box-shadow: 0 0 20px rgba(0, 212, 255, 0.2);
-    }
-
-    /* 侧边栏 */
+    /* ===== 侧边栏 ===== */
     .css-1d391kg {
-        background: rgba(15, 23, 42, 0.9);
+        background: var(--bg-secondary);
     }
 
-    /* 滚动条 */
-    ::-webkit-scrollbar {
-        width: 8px;
-        height: 8px;
+    /* ===== Radio 按钮 ===== */
+    .stRadio > div {
+        gap: 0.75rem;
     }
 
-    ::-webkit-scrollbar-track {
-        background: rgba(30, 41, 59, 0.5);
+    .stRadio [data-baseweb="radio"] {
+        padding: 0.75rem 1rem;
+        border-radius: var(--radius-md);
+        border: 2px solid var(--border);
+        background: var(--bg-secondary);
+        transition: all 0.2s ease;
+        font-weight: 500;
     }
 
-    ::-webkit-scrollbar-thumb {
-        background: linear-gradient(135deg, #7c3aed, #00d4ff);
-        border-radius: 4px;
+    .stRadio [data-baseweb="radio"]:hover {
+        border-color: var(--accent);
+        background: var(--accent-soft);
+    }
+
+    .stRadio [data-baseweb="radio"][aria-checked="true"] {
+        border-color: var(--accent);
+        background: var(--accent-soft);
+        color: var(--accent);
+    }
+
+    /* ===== 上传区域 ===== */
+    [data-testid="stFileUploader"] {
+        background: var(--bg-secondary);
+        border: 2px dashed var(--border);
+        border-radius: var(--radius-lg);
+        padding: 2rem;
+        transition: all 0.2s ease;
+    }
+
+    [data-testid="stFileUploader"]:hover {
+        border-color: var(--accent);
+        background: var(--accent-soft);
+    }
+
+    /* ===== 表格样式 ===== */
+    table {
+        width: 100%;
+        font-size: 0.95rem;
+    }
+
+    td {
+        padding: 0.75rem 0 !important;
+        border-bottom: 1px solid var(--border) !important;
+    }
+
+    td:last-child {
+        border-bottom: none !important;
+    }
+
+    /* Streamlit 原生元素覆盖 */
+    .st-h1, .st-h2, .st-h3, .st-h4 {
+        color: var(--text-primary);
+        font-weight: 700;
+    }
+
+    p {
+        color: var(--text-secondary);
+    }
+
+    /* 标签文字 */
+    .stTabs label, .stRadio label {
+        color: var(--text-primary);
     }
 </style>
 """, unsafe_allow_html=True)
@@ -253,22 +328,27 @@ BACKEND_URL = "http://127.0.0.1:8000"
 MODELS = {
     "simple": {
         "name": "SimpleCNN",
-        "params": "8.4M 参数",
-        "desc": "基础架构 · 快速测试",
-        "color": "#10b981"
+        "params": "8.44M",
+        "desc": "基础架构，适合快速测试"
     },
     "detailed": {
         "name": "DetailedCNN",
-        "params": "1.2M 参数",
-        "desc": "BatchNorm + Dropout · 稳健收敛",
-        "color": "#00d4ff"
+        "params": "4.32M",
+        "desc": "BatchNorm + Dropout，稳健收敛"
     },
     "resnet": {
         "name": "ResNet",
-        "params": "1.8M 参数",
-        "desc": "残差连接 · 深度网络",
-        "color": "#7c3aed"
+        "params": "3.05M",
+        "desc": "残差连接，适合复杂任务"
     }
+}
+
+# MotherDuck 风格图表配色
+CHART_COLORS = {
+    "train_loss": "#3b82f6",
+    "val_loss": "#888888",
+    "train_acc": "#22c55e",
+    "val_acc": "#f59e0b"
 }
 
 # ============================================================
@@ -288,28 +368,39 @@ def call_api(method: str, endpoint: str, files=None, **kwargs):
         response.raise_for_status()
         return response.json()
     except requests.exceptions.ConnectionError:
-        return {"error": "无法连接后端服务，请先启动后端: uvicorn backend:app --reload --port 8000"}
+        return {"error": "无法连接后端服务，请先启动后端"}
     except Exception as e:
         return {"error": str(e)}
 
 
-def create_metrics_chart(history: list, height: int = 350) -> go.Figure:
-    """创建训练指标图表 - 深色风格"""
+def create_metrics_chart(history: list, height: int = 380) -> go.Figure:
+    """创建训练指标图表 - MotherDuck 风格"""
     if not history:
         fig = go.Figure()
         fig.update_layout(
             height=height,
-            paper_bgcolor="rgba(0,0,0,0)",
-            plot_bgcolor="rgba(30,41,59,0.5)",
-            font={"color": "#94a3b8", "family": "Helvetica Neue"},
-            xaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.1)", color="#94a3b8"),
-            yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.1)", color="#94a3b8"),
+            paper_bgcolor="#ffffff",
+            plot_bgcolor="#f8f9fa",
+            font={"color": "#495057", "family": "Inter, system-ui, sans-serif", "size": 12},
+            xaxis=dict(showgrid=True, gridcolor="#dee2e6", color="#6c757d", showline=True, linewidth=1, linecolor="#dee2e6", tickfont=dict(size=11)),
+            yaxis=dict(showgrid=True, gridcolor="#dee2e6", color="#6c757d", showline=True, linewidth=1, linecolor="#dee2e6", tickfont=dict(size=11)),
+            margin=dict(l=65, r=40, t=50, b=60),
         )
+        # 添加居中文字
         fig.add_annotation(
             text="📊 等待训练开始...",
             x=0.5, y=0.5,
             showarrow=False,
-            font=dict(size=18, color="#64748b"),
+            font=dict(size=18, color="#adb5bd", family="Inter, system-ui, sans-serif"),
+            xanchor="center",
+            yanchor="middle"
+        )
+        # 添加副标题
+        fig.add_annotation(
+            text="选择模型并点击「开始训练」来查看实时指标",
+            x=0.5, y=0.4,
+            showarrow=False,
+            font=dict(size=12, color="#868e96"),
             xanchor="center",
             yanchor="middle"
         )
@@ -323,42 +414,46 @@ def create_metrics_chart(history: list, height: int = 350) -> go.Figure:
 
     fig = make_subplots(
         rows=2, cols=1,
-        subplot_titles=["<b>📉 Loss 曲线</b>", "<b>📈 Accuracy 曲线</b>"],
-        vertical_spacing=0.15
+        subplot_titles=["<b style='color:#1a1a2e;font-size:13px;font-family:Inter,sans-serif;'>📉 Loss 损失值</b>", "<b style='color:#1a1a2e;font-size:13px;font-family:Inter,sans-serif;'>📈 Accuracy 准确率 (%)</b>"],
+        vertical_spacing=0.20
     )
 
-    # Loss
+    # Loss 子图 - 填充区域效果
     fig.add_trace(go.Scatter(
         x=epochs, y=train_loss,
         name="训练 Loss",
-        line=dict(color="#f97316", width=3),
+        line=dict(color="#4263eb", width=2.5, shape='spline'),
         mode="lines+markers",
-        marker=dict(size=8, symbol="circle")
+        marker=dict(size=8, symbol="circle", line=dict(color="#ffffff", width=2)),
+        fill='tonexty' if val_loss else None,
+        fillcolor='rgba(66, 99, 235, 0.08)' if val_loss else None,
     ), row=1, col=1)
 
     fig.add_trace(go.Scatter(
         x=epochs, y=val_loss,
         name="验证 Loss",
-        line=dict(color="#ef4444", width=3, dash="dot"),
+        line=dict(color="#868e96", width=2.5, dash="solid", shape='spline'),
         mode="lines+markers",
-        marker=dict(size=8, symbol="square")
+        marker=dict(size=8, symbol="diamond", line=dict(color="#ffffff", width=2)),
     ), row=1, col=1)
 
-    # Accuracy
+    # Accuracy 子图 - 填充区域效果
     fig.add_trace(go.Scatter(
         x=epochs, y=train_acc,
         name="训练准确率",
-        line=dict(color="#22c55e", width=3),
+        line=dict(color="#2f9e44", width=2.5, shape='spline'),
         mode="lines+markers",
-        marker=dict(size=8, symbol="circle")
+        marker=dict(size=8, symbol="circle", line=dict(color="#ffffff", width=2)),
+        fill='tonexty' if val_acc else None,
+        fillcolor='rgba(47, 158, 68, 0.08)' if val_acc else None,
     ), row=2, col=1)
 
     fig.add_trace(go.Scatter(
         x=epochs, y=val_acc,
         name="验证准确率",
-        line=dict(color="#00d4ff", width=3, dash="dot"),
+        line=dict(color="#f08c00", width=2.5, dash="solid", shape='spline'),
         mode="lines+markers",
-        marker=dict(size=8, symbol="square")
+        marker=dict(size=8, symbol="diamond", line=dict(color="#ffffff", width=2)),
     ), row=2, col=1)
 
     fig.update_layout(
@@ -370,32 +465,58 @@ def create_metrics_chart(history: list, height: int = 350) -> go.Figure:
             y=1.02,
             xanchor="right",
             x=1,
-            bgcolor="rgba(30,41,59,0.8)",
-            bordercolor="rgba(255,255,255,0.1)",
-            borderwidth=1
+            bgcolor="rgba(255,255,255,0.95)",
+            bordercolor="#dee2e6",
+            borderwidth=1.5,
+            borderradius=8,
+            font=dict(family="Inter, system-ui, sans-serif", size=12, color="#495057")
         ),
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(30,41,59,0.3)",
-        font={"color": "#e2e8f0", "family": "Helvetica Neue"},
-        margin=dict(l=60, r=30, t=60, b=50),
+        paper_bgcolor="#ffffff",
+        plot_bgcolor="#f8f9fa",
+        font={"color": "#1a1a2e", "family": "Inter, system-ui, sans-serif"},
+        margin=dict(l=65, r=40, t=60, b=60),
+        hovermode="x unified",
+        hoverlabel=dict(
+            bgcolor="white",
+            bordercolor="#dee2e6",
+            borderwidth=1.5,
+            font=dict(family="Inter, system-ui, sans-serif", size=12)
+        )
     )
 
+    # X 轴配置
     fig.update_xaxes(
-        title_text="训练轮次 (Epoch)",
-        gridcolor="rgba(255,255,255,0.1)",
-        color="#94a3b8",
+        title_text="<b style='color:#495057;font-size:12px;'>Epoch 轮次</b>",
+        gridcolor="#dee2e6",
+        color="#6c757d",
+        showline=True,
+        linewidth=1.5,
+        linecolor="#dee2e6",
+        tickfont=dict(size=11, family="Inter"),
         row=2, col=1
     )
+
+    # Y 轴配置 - Loss
     fig.update_yaxes(
-        title_text="Loss 值",
-        gridcolor="rgba(255,255,255,0.1)",
-        color="#94a3b8",
+        title_text="<b style='color:#495057;font-size:12px;'>Loss</b>",
+        gridcolor="#dee2e6",
+        color="#6c757d",
+        showline=True,
+        linewidth=1.5,
+        linecolor="#dee2e6",
+        tickfont=dict(size=11, family="Inter"),
         row=1, col=1
     )
+
+    # Y 轴配置 - Accuracy
     fig.update_yaxes(
-        title_text="准确率 (%)",
-        gridcolor="rgba(255,255,255,0.1)",
-        color="#94a3b8",
+        title_text="<b style='color:#495057;font-size:12px;'>Accuracy (%)</b>",
+        gridcolor="#dee2e6",
+        color="#6c757d",
+        showline=True,
+        linewidth=1.5,
+        linecolor="#dee2e6",
+        tickfont=dict(size=11, family="Inter"),
         row=2, col=1
     )
 
@@ -416,7 +537,7 @@ if "training_history" not in st.session_state:
 # 主界面
 # ============================================================
 st.markdown('<h1 class="main-header">🔤 神经网络字符识别平台</h1>', unsafe_allow_html=True)
-st.markdown('<p class="subtitle">支持多模型训练 · 实时可视化 · 62类字符识别 (0-9, a-z, A-Z)</p>', unsafe_allow_html=True)
+st.markdown('<p class="main-subtitle">支持多模型训练 · 实时可视化 · 62类字符识别 (0-9, a-z, A-Z)</p>', unsafe_allow_html=True)
 
 # Tab 切换
 tab_inference, tab_training = st.tabs(["🎯 推理模式", "🏋️ 训练模式"])
@@ -425,10 +546,13 @@ tab_inference, tab_training = st.tabs(["🎯 推理模式", "🏋️ 训练模�
 # 推理模式
 # ============================================================
 with tab_inference:
-    col1, col2 = st.columns([1, 1], gap="large")
+    # 两列布局
+    col_left, col_right = st.columns([1, 1], gap="large")
 
-    with col1:
-        st.markdown("### 📤 上传图片")
+    with col_left:
+        st.markdown("#### 📤 上传图片")
+        st.markdown('<div class="card">', unsafe_allow_html=True)
+
         uploaded_file = st.file_uploader(
             "请选择要识别的图片",
             type=["jpg", "jpeg", "png", "bmp"],
@@ -436,105 +560,104 @@ with tab_inference:
         )
 
         if uploaded_file:
-            st.image(uploaded_file, caption="待识别图片", width=380)
-
-            if st.button("🔮 开始识别", type="primary", use_container_width=True):
-                with st.spinner("🔄 模型推理中，请稍候..."):
-                    files = {
-                        "file": (uploaded_file.name, uploaded_file.getvalue(), uploaded_file.type)
-                    }
-                    result = call_api("POST", "/predict/", files=files)
-
-                    if "error" in result:
-                        st.error(result["error"])
-                    else:
-                        st.success("✅ 识别完成！")
-                        prediction = result.get("prediction", {})
-                        st.metric(
-                            label="识别结果",
-                            value=prediction.get("class", "?"),
-                            delta=f"置信度: {prediction.get('confidence', 0)*100:.1f}%"
-                        )
+            st.image(uploaded_file, caption="待识别图片", width=320)
         else:
-            st.info("👆 请上传一张图片开始识别")
+            st.info("请上传一张图片")
 
-    with col2:
-        st.markdown("### 📊 模型信息")
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    with col_right:
+        st.markdown("#### 📊 模型信息")
+        st.markdown('<div class="card">', unsafe_allow_html=True)
+
         st.markdown("""
-        <div class="card">
-            <h4 style="color: #00d4ff; margin-top: 0;">当前模型</h4>
-            <p style="font-size: 1.4rem; color: #ffffff; margin: 12px 0;">
-                <strong>DetailedCNN</strong>
-            </p>
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 16px;">
-                <div style="background: rgba(0,212,255,0.1); padding: 12px; border-radius: 8px; text-align: center;">
-                    <div style="color: #00d4ff; font-size: 1.2rem;">1.2M</div>
-                    <div style="color: #94a3b8; font-size: 0.8rem;">参数量</div>
-                </div>
-                <div style="background: rgba(124,58,237,0.1); padding: 12px; border-radius: 8px; text-align: center;">
-                    <div style="color: #7c3aed; font-size: 1.2rem;">64×64</div>
-                    <div style="color: #94a3b8; font-size: 0.8rem;">输入尺寸</div>
-                </div>
-            </div>
-        </div>
+        <table style="width: 100%; font-size: 0.9rem;">
+            <tr style="border-bottom: 1px solid #e5e5e5;">
+                <td style="color: #888888; padding: 0.5rem 0;">当前模型</td>
+                <td style="text-align: right; font-weight: 600; color: #2d2d2d;">DetailedCNN</td>
+            </tr>
+            <tr style="border-bottom: 1px solid #e5e5e5;">
+                <td style="color: #888888; padding: 0.5rem 0;">参数量</td>
+                <td style="text-align: right; font-weight: 600; color: #2d2d2d;">4.32M</td>
+            </tr>
+            <tr style="border-bottom: 1px solid #e5e5e5;">
+                <td style="color: #888888; padding: 0.5rem 0;">输入尺寸</td>
+                <td style="text-align: right; font-weight: 600; color: #2d2d2d;">64 × 64</td>
+            </tr>
+            <tr>
+                <td style="color: #888888; padding: 0.5rem 0;">字符类别</td>
+                <td style="text-align: right; font-weight: 600; color: #2d2d2d;">62 类</td>
+            </tr>
+        </table>
         """, unsafe_allow_html=True)
 
-        st.markdown("### 🔤 支持的字符")
-        chars = "0-9 · a-z · A-Z"
-        st.markdown(f"""
-        <div class="card" style="text-align: center;">
-            <p style="font-size: 1.5rem; color: #00d4ff; letter-spacing: 4px;">{chars}</p>
-            <p style="color: #94a3b8;">共 62 个类别</p>
-        </div>
-        """, unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+
+        st.markdown("#### 🔤 支持的字符")
+        st.markdown('<div class="card" style="text-align: center;">', unsafe_allow_html=True)
+        st.markdown("**0-9 · a-z · A-Z**", unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    # 推理按钮
+    if uploaded_file:
+        if st.button("🔮 开始识别", type="primary", use_container_width=True):
+            with st.spinner("模型推理中..."):
+                files = {
+                    "file": (uploaded_file.name, uploaded_file.getvalue(), uploaded_file.type)
+                }
+                result = call_api("POST", "/predict/", files=files)
+
+                if "error" in result:
+                    st.error(result["error"])
+                else:
+                    st.success("✅ 识别完成！")
+                    prediction = result.get("prediction", {})
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.metric("识别结果", prediction.get("class", "?"))
+                    with col2:
+                        st.metric("置信度", f"{prediction.get('confidence', 0)*100:.1f}%")
 
 # ============================================================
 # 训练模式
 # ============================================================
 with tab_training:
-    # 顶部状态卡片
+    # 获取训练状态
     status = call_api("GET", "/train/status/")
     current_status = status.get("status", "idle")
 
+    # 顶部状态栏 - 4 个均等功能
     s_col1, s_col2, s_col3, s_col4 = st.columns(4)
-    status_map = {
+
+    status_labels = {
         "idle": "⏸️ 空闲",
-        "running": "🔄 训练中",
+        "running": "🔄 运行中",
         "completed": "✅ 已完成",
         "stopped": "⏹️ 已停止"
     }
 
     with s_col1:
-        st.markdown(f"""
-        <div class="metric-card">
-            <div class="metric-value">{status_map.get(current_status, current_status)}</div>
-            <div class="metric-label">训练状态</div>
-            <div style="color: #64748b; font-size: 0.8rem; margin-top: 4px;">
-                Epoch {status.get('epoch', 0)}/{status.get('epochs', 0)}
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
+        st.markdown('<div class="metric-card">', unsafe_allow_html=True)
+        st.markdown(f'<div class="metric-value">{status_labels.get(current_status, current_status)}</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="metric-label">训练状态 · Epoch {status.get("epoch", 0)}/{status.get("epochs", 0)}</div>', unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
 
     with s_col2:
+        st.markdown('<div class="metric-card">', unsafe_allow_html=True)
         best_acc = status.get("best_acc", 0.0)
-        st.markdown(f"""
-        <div class="metric-card">
-            <div class="metric-value">{'-' if not best_acc else f'{best_acc:.2f}%'}</div>
-            <div class="metric-label">最佳准确率</div>
-        </div>
-        """, unsafe_allow_html=True)
+        st.markdown(f'<div class="metric-value metric-accent">{"-" if not best_acc else f"{best_acc:.2f}%"}</div>', unsafe_allow_html=True)
+        st.markdown('<div class="metric-label">最佳准确率</div>', unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
 
     with s_col3:
+        st.markdown('<div class="metric-card">', unsafe_allow_html=True)
         net_type = status.get("net_type", "detailed")
-        model_info = MODELS.get(net_type, {})
-        st.markdown(f"""
-        <div class="metric-card">
-            <div class="metric-value" style="font-size: 1.5rem;">{model_info.get('name', net_type)}</div>
-            <div class="metric-label">当前模型</div>
-        </div>
-        """, unsafe_allow_html=True)
+        st.markdown(f'<div class="metric-value" style="font-size: 1.2rem;">{MODELS.get(net_type, {}).get("name", net_type)}</div>', unsafe_allow_html=True)
+        st.markdown('<div class="metric-label">当前模型</div>', unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
 
     with s_col4:
+        st.markdown('<div class="metric-card">', unsafe_allow_html=True)
         start_time = status.get("start_time")
         elapsed = "-"
         if start_time:
@@ -543,38 +666,52 @@ with tab_training:
                 elapsed = (datetime.now() - dt).strftime("%H:%M:%S")
             except:
                 pass
-        st.markdown(f"""
-        <div class="metric-card">
-            <div class="metric-value" style="font-size: 1.3rem;">{elapsed}</div>
-            <div class="metric-label">运行时长</div>
-        </div>
-        """, unsafe_allow_html=True)
+        st.markdown(f'<div class="metric-value" style="font-size: 1.2rem; font-variant-numeric: tabular-nums;">{elapsed}</div>', unsafe_allow_html=True)
+        st.markdown('<div class="metric-label">运行时长</div>', unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
 
     st.markdown("<hr>", unsafe_allow_html=True)
 
-    # 配置和图表区域
+    # 主体区域 - 配置 1/3，图表 2/3
     config_col, chart_col = st.columns([1, 2], gap="large")
 
     with config_col:
-        st.markdown("### ⚙️ 模型选择")
+        st.markdown("##### ⚙️ 模型选择")
+        st.markdown('<div class="card">', unsafe_allow_html=True)
 
-        for model_key, model_info in MODELS.items():
-            is_selected = st.session_state.selected_model == model_key
-            card_class = "model-option selected" if is_selected else "model-option"
+        # 使用单选按钮组选择模型
+        selected = st.radio(
+            "选择模型架构",
+            options=list(MODELS.keys()),
+            format_func=lambda x: f"{MODELS[x]['name']} ({MODELS[x]['params']})",
+            index=list(MODELS.keys()).index(st.session_state.selected_model),
+            label_visibility="collapsed",
+            horizontal=True
+        )
 
-            if st.button(
-                f"**{model_info['name']}**\n{model_info['params']}\n_{model_info['desc']}_",
-                key=f"model_{model_key}"
-            ):
-                st.session_state.selected_model = model_key
-                st.rerun()
+        st.session_state.selected_model = selected
 
-        st.markdown("### 📝 训练参数")
+        # 显示选中模型的详细信息
+        model_info = MODELS[st.session_state.selected_model]
+        st.markdown(f"""
+        <div style="margin-top: 0.75rem; padding: 0.75rem; background: #eff6ff; border-radius: 8px; border-left: 3px solid #3b82f6;">
+            <div style="font-weight: 600; color: #2d2d2d;">{model_info['name']}</div>
+            <div style="color: #666666; font-size: 0.8rem; margin-top: 0.25rem;">{model_info['desc']}</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        st.markdown('</div>', unsafe_allow_html=True)
+
+        st.markdown("##### 📝 训练参数")
+        st.markdown('<div class="card">', unsafe_allow_html=True)
+
         epochs = st.slider("训练轮次 (Epochs)", 1, 100, 30)
-        batch_size = st.select_slider("批次大小 (Batch Size)", options=[32, 64, 128, 256], value=128)
-        learning_rate = st.number_input("学习率 (Learning Rate)", value=0.001, format="%.4f")
+        batch_size = st.select_slider("批次大小", options=[32, 64, 128, 256], value=128)
+        learning_rate = st.number_input("学习率", value=0.001, format="%.4f", step=0.0001)
 
-        st.markdown("### 🎮 控制")
+        st.markdown('</div>', unsafe_allow_html=True)
+
+        st.markdown("##### 🎮 控制")
         c1, c2 = st.columns(2)
         with c1:
             start_btn = st.button("▶️ 开始训练", type="primary", use_container_width=True, disabled=current_status == "running")
@@ -599,7 +736,8 @@ with tab_training:
                 st.rerun()
 
     with chart_col:
-        st.markdown("### 📈 训练曲线")
+        st.markdown("##### 📈 训练曲线")
+        st.markdown('<div class="chart-container">', unsafe_allow_html=True)
 
         metrics = call_api("GET", "/train/metrics/")
         history = metrics.get("history", [])
@@ -607,7 +745,7 @@ with tab_training:
         if current_status == "running" and history:
             st.session_state.training_history = history
 
-        fig = create_metrics_chart(st.session_state.training_history or history, height=400)
+        fig = create_metrics_chart(st.session_state.training_history or history, height=380)
         st.plotly_chart(fig, use_container_width=True)
 
         # 进度条
@@ -615,8 +753,9 @@ with tab_training:
             epoch = metrics.get("epoch", 0)
             total_epochs = metrics.get("epochs", epochs)
             progress = epoch / total_epochs if total_epochs > 0 else 0
-            st.progress(progress, text=f"🔄 训练进度: {epoch}/{total_epochs} ({progress*100:.1f}%)")
+            st.progress(progress, text=f"训练进度: {epoch}/{total_epochs} ({progress*100:.1f}%)")
 
+            # 实时指标
             m1, m2, m3, m4 = st.columns(4)
             with m1:
                 st.metric("训练 Loss", f"{metrics.get('train_loss', 0):.4f}")
@@ -635,20 +774,19 @@ with tab_training:
             if history:
                 final = history[-1]
                 st.markdown(f"""
-                <div class="card">
-                    <h4 style="color: #00d4ff; margin-top: 0;">📋 训练报告</h4>
-                    <table style="width: 100%; color: #e2e8f0;">
-                        <tr>
-                            <td>最终训练准确率</td>
-                            <td style="text-align: right; color: #22c55e; font-weight: bold;">{final.get('train_acc', 0):.2f}%</td>
+                <div style="margin-top: 1rem; padding: 1rem; background: #f0fdf4; border-radius: 8px; border-left: 3px solid #22c55e;">
+                    <table style="width: 100%; font-size: 0.9rem;">
+                        <tr style="border-bottom: 1px solid #e5e5e5;">
+                            <td style="color: #666666;">最终训练准确率</td>
+                            <td style="text-align: right; font-weight: 600; color: #22c55e;">{final.get('train_acc', 0):.2f}%</td>
+                        </tr>
+                        <tr style="border-bottom: 1px solid #e5e5e5;">
+                            <td style="color: #666666;">最终验证准确率</td>
+                            <td style="text-align: right; font-weight: 600; color: #f59e0b;">{final.get('val_acc', 0):.2f}%</td>
                         </tr>
                         <tr>
-                            <td>最终验证准确率</td>
-                            <td style="text-align: right; color: #00d4ff; font-weight: bold;">{final.get('val_acc', 0):.2f}%</td>
-                        </tr>
-                        <tr>
-                            <td>最佳验证准确率</td>
-                            <td style="text-align: right; color: #f97316; font-weight: bold;">{metrics.get('best_acc', 0):.2f}%</td>
+                            <td style="color: #666666;">最佳验证准确率</td>
+                            <td style="text-align: right; font-weight: 700; color: #3b82f6;">{metrics.get('best_acc', 0):.2f}%</td>
                         </tr>
                     </table>
                 </div>
@@ -656,6 +794,8 @@ with tab_training:
 
         elif current_status == "idle":
             st.info("👆 选择模型和参数后点击「开始训练」")
+
+        st.markdown('</div>', unsafe_allow_html=True)
 
 # ============================================================
 # 侧边栏

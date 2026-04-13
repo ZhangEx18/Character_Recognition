@@ -9,6 +9,8 @@ FastAPI 后端 - 神经网络字符识别平台
 - POST /train/stop/ - 停止训练
 """
 
+#  uv run uvicorn backend:app --reload --port 8000
+
 import io
 import sys
 import threading
