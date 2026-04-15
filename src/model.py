@@ -1,30 +1,60 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as f
-#import Tuple
+import torch.nn.functional as F
 
 
-class ResidualBlock(nn.Module):
-	def __init__(self,in_channles:int,out_channles:int,stride:int = 1):
-		super(ResidualBlock,self).__init__()
-		self.conv1 = nn.Conv2d(in_channles,out_channles,kernel_size=3,stride=stride,padding=1)
-		self.bn1 = nn.BatchNorm2d(out_channles)
-		self.conv2 = nn.Conv2d(in_channles,out_channles,kernel_size=3,stride=1,padding=1)
-		self.bn2 = nn.BatchNorm2d(out_channles)
+class BasicBlock(nn.Module):
+    expansion = 1
 
-		self.shortcut = nn.Sequential()
-		if stride  != 1 or in_channles != out_channles:
-			self.shortcut = nn.Sequential(
-				nn.Conv2d(in_channles,out_channles,kernel_size=1,stride=1),
-				nn.BatchNorm2d(out_channles)
-			)
+    def __init__(self, in_channel, out_channel, stride=1, downsample=None):
+        super(BasicBlock, self).__init__()
 
-	def forward(self,x:torch.Tensor) -> torch.Tensor:
-		out = f.relu(self.bn1(self.conv1(x)))
+        self.features = nn.Sequential(
+            nn.Conv2d(in_channel, out_channel, kernel_size=3, stride=stride, padding=1, bias=False),
+            nn.BatchNorm2d(out_channel),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(out_channel, out_channel, kernel_size=3, stride=1, padding=1, bias=False),
+            nn.BatchNorm2d(out_channel)
+        )
 
-		out = self.bn2(self.conv2(x))
-		out += self.shortcut(x)
-		out = f.relu(out)
+        self.downsample = downsample
 
-		return out
+    def forward(self, x):
+        identity = x
+
+        # 如果外部传了下采样模块，就用它处理 identity
+        if self.downsample is not None:
+            identity = self.downsample(x)
+
+        out = self.features(x)
+        out += identity
+        out = F.relu(out, inplace=True)
+
+        return out
+
+class ResNet(nn.Module):
+
+    def __init__(self,num_classes: int =62):
+        super(ResNet,self).__init__()
+        self.in_channels = 32
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
