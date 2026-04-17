@@ -34,41 +34,6 @@ class BasicBlock(nn.Module):  # 适用于ResNet-18，34
         return out
 
 
-class Bottleneck(nn.Module):  # 适用于ResNet-50，101
-    expansion = 4
-
-    def __init__(self, in_channel, out_channel, stride=1, downsample=None):
-        super().__init__()
-        self.features = nn.Sequential(
-            # 第一层：1x1 卷积，降维
-            nn.Conv2d(in_channel, out_channel, kernel_size=1, stride=1, bias=False),
-            nn.BatchNorm2d(out_channel),
-            nn.ReLU(inplace=True),  # 记得这里通常有激活函数
-
-            # 第二层：3x3 卷积，处理特征（必须有 padding=1，且 stride 跟随输入）
-            nn.Conv2d(out_channel, out_channel, kernel_size=3, stride=stride, padding=1, bias=False),
-            nn.BatchNorm2d(out_channel),
-            nn.ReLU(inplace=True),
-
-            # 第三层：1x1 卷积，升维 (乘以 expansion 4)
-            nn.Conv2d(out_channel, out_channel * self.expansion, kernel_size=1, stride=1, bias=False),
-            nn.BatchNorm2d(out_channel * self.expansion),
-            # 注意：最后这一层后面没有 ReLU，ReLU 要在残差相加之后做
-        )
-        self.downsample = downsample
-
-    def forward(self, x):
-        identity = x
-        if self.downsample is not None:
-            identity = self.downsample(x)
-
-        out = self.features(x)
-        out += identity  # 相加
-        out = F.relu(out)  # 相加后再激活
-
-        return out
-
-
 class ResNet(nn.Module):
 
     def __init__(self, block, block_num, num_classes: int = 62, include_top=True):
