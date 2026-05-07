@@ -35,6 +35,7 @@ import torchvision.transforms as transforms
 # 导入模型和数据加载
 from src import count_parameters, create_dataloaders, get_device
 from src.models import create_model, MODEL_REGISTRY
+from src.forward_viz import ForwardVisualizer
 
 # ============================================================
 # 应用初始化
@@ -180,6 +181,72 @@ async def make_prediction(
     }
 
     return {"filename": file.filename, "prediction": result}
+
+
+# ============================================================
+# 可视化推理接口
+# ============================================================
+@app.post("/predict/visualize/")
+async def visualize_prediction(
+    file: UploadFile = File(...),
+    net_type: str = "detailed"
+):
+    """图片推理 + 各层特征图可视化"""
+    if net_type not in MODEL_REGISTRY:
+        raise HTTPException(status_code=400, detail=f"不支持的模型类型: {net_type}")
+
+    image_bytes = await file.read()
+
+    try:
+        image = Image.open(io.BytesIO(image_bytes)).convert("L")
+        tensor = inference_transform(image).unsqueeze(0)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"无法解析图像: {e}")
+
+    device = get_device()
+    model = create_model(net_type, num_classes=62).to(device)
+
+    # 加载最佳权重（如果存在）
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    checkpoint_path = os.path.join(base_dir, "checkpoints", "best_model.pth")
+    if os.path.exists(checkpoint_path):
+        try:
+            state_dict = torch.load(checkpoint_path, map_location=device)
+            model.load_state_dict(state_dict)
+        except RuntimeError:
+            pass  # 权重不匹配时使用随机权重
+
+    tensor = tensor.to(device)
+
+    # 执行推理（必须先切换 eval 模式，否则 BatchNorm 在 batch=1 时会报错）
+    model.eval()
+    with torch.no_grad():
+        output = model(tensor)
+        probs = torch.softmax(output, dim=1)
+        confidence, predicted = probs.max(1)
+
+    class_idx = predicted.item()
+    prediction = {
+        "class": char_map[class_idx],
+        "class_idx": class_idx,
+        "confidence": round(confidence.item(), 4),
+        "top_k": [
+            {"class": char_map[idx], "confidence": round(probs[0][idx].item(), 4)}
+            for idx in output[0].argsort(descending=True)[:5].tolist()
+        ]
+    }
+
+    # 捕获特征图
+    viz = ForwardVisualizer(model)
+    viz.capture(tensor)
+    layer_images = viz.to_images(max_channels=9, thumb_size=48)
+    viz.remove_hooks()
+
+    return {
+        "filename": file.filename,
+        "prediction": prediction,
+        "layers": layer_images
+    }
 
 
 # ============================================================

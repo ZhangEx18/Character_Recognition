@@ -275,6 +275,23 @@ HTML_CONTENT = """<!DOCTYPE html>
   .stagger-2 { animation-delay: 0.1s; }
   .stagger-3 { animation-delay: 0.15s; }
   .stagger-4 { animation-delay: 0.2s; }
+
+  /* 可视化面板样式 */
+  .viz-empty { display: block; }
+  .viz-empty.hidden { display: none; }
+  .viz-result { display: none; }
+  .viz-result.show { display: block; }
+  .viz-prediction { text-align: center; margin-bottom: 1rem; }
+  .viz-pred-char { font-size: 3.5rem; font-weight: 800; font-family: var(--font-mono); background: linear-gradient(135deg, var(--accent-blue), var(--accent-cyan)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; line-height: 1; }
+  .viz-pred-label { font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.08em; margin-top: 0.25rem; }
+  .viz-pred-conf { font-size: 0.75rem; color: var(--text-secondary); font-family: var(--font-mono); margin-top: 0.2rem; }
+  #viz-topology-canvas { width: 100%; height: 200px; border-radius: var(--radius-md); background: rgba(7, 11, 20, 0.5); border: 1px solid var(--border); }
+  .viz-features-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 1.25rem; }
+  .viz-layer-card { background: rgba(13, 17, 23, 0.6); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 1rem; transition: border-color 0.3s; }
+  .viz-layer-card:hover { border-color: rgba(56, 189, 248, 0.3); }
+  .viz-layer-title { font-size: 0.75rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 0.75rem; font-family: var(--font-mono); }
+  .viz-layer-img { width: 100%; border-radius: 6px; border: 1px solid var(--border); background: #000; }
+  .viz-layer-img.fc { height: 48px; object-fit: cover; }
 </style>
 </head>
 <body>
@@ -313,6 +330,10 @@ HTML_CONTENT = """<!DOCTYPE html>
       <button class="nav-tab active" data-tab="inference">
         <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
         推理
+      </button>
+      <button class="nav-tab" data-tab="visualize">
+        <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+        可视化
       </button>
       <button class="nav-tab" data-tab="training">
         <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 20V10M6 20V4M18 20v-6"/></svg>
@@ -380,6 +401,72 @@ HTML_CONTENT = """<!DOCTYPE html>
           支持的字符类别
         </div>
         <div class="char-grid" id="char-grid"></div>
+      </div>
+    </div>
+
+    <!-- ===== 可视化面板 ===== -->
+    <div class="panel" id="panel-visualize">
+      <div class="inference-grid">
+        <div class="card fade-up">
+          <div class="card-title">
+            <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+            可视化推理
+          </div>
+          <div class="control-label">选择模型架构</div>
+          <select class="form-select" id="viz-model-select">
+            <option value="detailed" selected>DetailedCNN (生产推荐)</option>
+            <option value="simple">SimpleCNN (快速验证)</option>
+            <option value="lenet">LeNet-5 (CNN始祖)</option>
+            <option value="vgg">VGG (小卷积堆叠)</option>
+            <option value="resnet">ResNet (残差网络)</option>
+            <option value="seresnet">SE-ResNet (通道注意力)</option>
+            <option value="mobilenet">MobileNet (轻量高效)</option>
+            <option value="mlp">MLPNet (全连接基线)</option>
+          </select>
+          <div class="drop-zone" id="viz-drop-zone">
+            <div class="drop-zone-icon">
+              <svg width="48" height="48" fill="none" stroke="#8b949e" stroke-width="1.5" viewBox="0 0 24 24"><path d="M4 14.899A7 7 0 1 1 15.1 6.5c-.737.73-1.315 1.52-1.672 2.35a3 3 0 0 1 2.087 1.35L16 11M8 17l-3.5-3.5M12 3v11M3 15h4"/></svg>
+            </div>
+            <div class="drop-zone-text">拖拽图片到这里，或 <strong>点击选择文件</strong></div>
+            <div class="drop-zone-hint">支持 JPG, PNG, BMP - 64x64 灰度</div>
+            <input type="file" id="viz-file-input" accept="image/*" style="display:none">
+          </div>
+          <img id="viz-preview-img" alt="preview">
+          <button class="btn btn-primary btn-full" id="viz-predict-btn" disabled style="margin-top:1rem">
+            <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+            可视化识别
+          </button>
+        </div>
+        <div class="card fade-up stagger-1">
+          <div class="card-title">
+            <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+            网络拓扑流动
+          </div>
+          <div class="viz-empty" id="viz-empty">
+            <div class="empty-state">
+              <div class="empty-state-icon">
+                <svg width="40" height="40" fill="none" stroke="#484f58" stroke-width="1.5" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+              </div>
+              <div class="empty-state-title">等待上传图片</div>
+              <div class="empty-state-desc">上传图片后将展示神经网络数据流动画与各层特征图</div>
+            </div>
+          </div>
+          <div class="viz-result" id="viz-result">
+            <div class="viz-prediction">
+              <div class="viz-pred-char" id="viz-pred-char">-</div>
+              <div class="viz-pred-label">预测结果</div>
+              <div class="viz-pred-conf" id="viz-pred-conf">置信度 0%</div>
+            </div>
+            <canvas id="viz-topology-canvas" width="420" height="200"></canvas>
+          </div>
+        </div>
+      </div>
+      <div class="card fade-up stagger-2" id="viz-features-card" style="margin-top:1.5rem; display:none;">
+        <div class="card-title">
+          <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h7"/></svg>
+          逐层特征图
+        </div>
+        <div class="viz-features-grid" id="viz-features-grid"></div>
       </div>
     </div>
 
@@ -675,6 +762,203 @@ function showResult(pred) {
       div.querySelector('.top-k-bar').style.width = (item.confidence * 100) + '%';
     });
   });
+}
+
+/* Visualization */
+document.getElementById('viz-model-select').addEventListener('change', function(e) { currentModel = e.target.value; });
+
+var vizDropZone = document.getElementById('viz-drop-zone');
+var vizFileInput = document.getElementById('viz-file-input');
+var vizPreviewImg = document.getElementById('viz-preview-img');
+var vizPredictBtn = document.getElementById('viz-predict-btn');
+var vizUploadedFile = null;
+
+vizDropZone.addEventListener('click', function() { vizFileInput.click(); });
+vizDropZone.addEventListener('dragover', function(e) { e.preventDefault(); vizDropZone.classList.add('drag-over'); });
+vizDropZone.addEventListener('dragleave', function() { vizDropZone.classList.remove('drag-over'); });
+vizDropZone.addEventListener('drop', function(e) {
+  e.preventDefault();
+  vizDropZone.classList.remove('drag-over');
+  var f = e.dataTransfer.files[0];
+  if (f) handleVizFile(f);
+});
+vizFileInput.addEventListener('change', function(e) {
+  var f = e.target.files[0];
+  if (f) handleVizFile(f);
+});
+
+function handleVizFile(file) {
+  vizUploadedFile = file;
+  var reader = new FileReader();
+  reader.onload = function(e) {
+    vizPreviewImg.src = e.target.result;
+    vizPreviewImg.style.display = 'block';
+    vizPredictBtn.disabled = false;
+    document.getElementById('viz-empty').classList.remove('hidden');
+    document.getElementById('viz-result').classList.remove('show');
+    document.getElementById('viz-features-card').style.display = 'none';
+  };
+  reader.readAsDataURL(file);
+}
+
+vizPredictBtn.addEventListener('click', function() {
+  if (!vizUploadedFile) return;
+  vizPredictBtn.disabled = true;
+  vizPredictBtn.innerHTML = '<svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg> 推理中...';
+
+  var form = new FormData();
+  form.append('file', vizUploadedFile);
+
+  fetch(BACKEND + '/predict/visualize/?net_type=' + encodeURIComponent(currentModel), { method: 'POST', body: form })
+    .then(function(res) { return res.json(); })
+    .then(function(data) {
+      showVizResult(data);
+      toast('可视化推理完成', 'success');
+    })
+    .catch(function(e) {
+      toast('可视化推理失败: ' + e.message, 'error');
+    })
+    .finally(function() {
+      vizPredictBtn.disabled = false;
+      vizPredictBtn.innerHTML = '<svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg> 可视化识别';
+    });
+});
+
+function showVizResult(data) {
+  document.getElementById('viz-empty').classList.add('hidden');
+  document.getElementById('viz-result').classList.add('show');
+  document.getElementById('viz-features-card').style.display = 'block';
+
+  var pred = data.prediction;
+  document.getElementById('viz-pred-char').textContent = pred.class;
+  document.getElementById('viz-pred-conf').textContent = '置信度 ' + (pred.confidence * 100).toFixed(1) + '%';
+
+  // 启动网络拓扑动画
+  startTopologyAnimation();
+
+  // 渲染特征图
+  var grid = document.getElementById('viz-features-grid');
+  grid.innerHTML = '';
+  var layers = data.layers || {};
+  Object.keys(layers).forEach(function(name) {
+    var card = document.createElement('div');
+    card.className = 'viz-layer-card fade-up';
+    var isFc = name.toLowerCase().indexOf('fc') !== -1;
+    card.innerHTML = '<div class="viz-layer-title">' + name + '</div><img class="viz-layer-img ' + (isFc ? 'fc' : '') + '" src="data:image/png;base64,' + layers[name] + '" alt="' + name + '">';
+    grid.appendChild(card);
+  });
+}
+
+/* 网络拓扑流动画 */
+var topologyAnimFrame = null;
+function startTopologyAnimation() {
+  var canvas = document.getElementById('viz-topology-canvas');
+  if (!canvas) return;
+  var ctx = canvas.getContext('2d');
+  var W = canvas.width, H = canvas.height;
+
+  if (topologyAnimFrame) cancelAnimationFrame(topologyAnimFrame);
+
+  // 定义层结构 [输入, 卷积, 池化, 卷积, 池化, 全连接, 输出]
+  var layers = [
+    { name: 'Input', x: 0.08, color: '#38bdf8', nodes: 8 },
+    { name: 'Conv', x: 0.24, color: '#22d3ee', nodes: 10 },
+    { name: 'Pool', x: 0.40, color: '#4ade80', nodes: 6 },
+    { name: 'Conv', x: 0.56, color: '#22d3ee', nodes: 8 },
+    { name: 'Pool', x: 0.72, color: '#4ade80', nodes: 5 },
+    { name: 'FC', x: 0.88, color: '#fbbf24', nodes: 4 },
+    { name: 'Out', x: 0.96, color: '#f87171', nodes: 1 }
+  ];
+
+  var particles = [];
+  var t = 0;
+
+  function spawnParticle() {
+    particles.push({
+      layer: 0, progress: 0,
+      speed: 0.008 + Math.random() * 0.006,
+      yOffset: (Math.random() - 0.5) * 0.6
+    });
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    t += 1;
+
+    // 绘制层节点柱
+    layers.forEach(function(layer, li) {
+      var cx = layer.x * W;
+      var spacing = H / (layer.nodes + 1);
+      for (var i = 0; i < layer.nodes; i++) {
+        var ny = spacing * (i + 1);
+        var pulse = 0.6 + 0.4 * Math.sin(t * 0.05 + li + i);
+        ctx.beginPath();
+        ctx.arc(cx, ny, 3 + (li === 0 || li === layers.length - 1 ? 1 : 0), 0, Math.PI * 2);
+        ctx.fillStyle = layer.color;
+        ctx.globalAlpha = pulse;
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      }
+      // 层标签
+      ctx.fillStyle = '#8b949e';
+      ctx.font = '10px Inter, system-ui';
+      ctx.textAlign = 'center';
+      ctx.fillText(layer.name, cx, H - 6);
+    });
+
+    // 绘制层间连线
+    for (var li = 0; li < layers.length - 1; li++) {
+      var l1 = layers[li], l2 = layers[li + 1];
+      var x1 = l1.x * W, x2 = l2.x * W;
+      var s1 = H / (l1.nodes + 1), s2 = H / (l2.nodes + 1);
+      ctx.globalAlpha = 0.08;
+      ctx.strokeStyle = l1.color;
+      ctx.lineWidth = 0.5;
+      for (var i = 0; i < l1.nodes; i++) {
+        for (var j = 0; j < l2.nodes; j++) {
+          ctx.beginPath();
+          ctx.moveTo(x1, s1 * (i + 1));
+          ctx.lineTo(x2, s2 * (j + 1));
+          ctx.stroke();
+        }
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    // 生成新粒子
+    if (t % 8 === 0) spawnParticle();
+
+    // 更新并绘制粒子
+    for (var i = particles.length - 1; i >= 0; i--) {
+      var p = particles[i];
+      p.progress += p.speed;
+      if (p.progress >= 1) {
+        p.layer++;
+        p.progress = 0;
+        if (p.layer >= layers.length - 1) {
+          particles.splice(i, 1);
+          continue;
+        }
+      }
+      var l1 = layers[p.layer], l2 = layers[p.layer + 1];
+      var x1 = l1.x * W, x2 = l2.x * W;
+      var px = x1 + (x2 - x1) * p.progress;
+      var s1 = H / (l1.nodes + 1), s2 = H / (l2.nodes + 1);
+      var midY = (H / 2) + p.yOffset * (H * 0.3);
+      var py = midY + (Math.sin(p.progress * Math.PI) * 10);
+
+      ctx.beginPath();
+      ctx.arc(px, py, 2.5, 0, Math.PI * 2);
+      ctx.fillStyle = '#ffffff';
+      ctx.shadowColor = l1.color;
+      ctx.shadowBlur = 8;
+      ctx.fill();
+      ctx.shadowBlur = 0;
+    }
+
+    topologyAnimFrame = requestAnimationFrame(draw);
+  }
+  draw();
 }
 
 /* Training controls */
