@@ -54,7 +54,7 @@ def calc_conv_output_size(
     padding: int = 0,
     dilation: int = 1
 ) -> int:
-    """
+    r"""
     计算二维卷积层输出特征图的单侧物理分辨率。
 
     【数学原理】：
@@ -77,7 +77,7 @@ def calc_pool_output_size(
     kernel_size: int,
     stride: int = None
 ) -> int:
-    """
+    r"""
     计算下采样(池化)层输出特征图的单侧物理分辨率。
 
     【机制说明】：
