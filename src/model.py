@@ -159,6 +159,8 @@ class SEResNet(nn.Module):
         for s in strides:
             layers.append(SEResidualBlock(in_channels, out_channels, s, use_se=use_se))
             in_channels = out_channels
+        # 更新实例变量，确保下一层能正确接收当前层的输出通道数
+        self.in_channels = out_channels
         return nn.Sequential(*layers)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -417,11 +419,11 @@ class ResNet(nn.Module):
         # 自适应平均池化机制 (AdaptiveAvgPool)
         # 强制将任意尺寸的输入特征图通过空间重采样聚合为固定的 4x4 空间维度。
         # 此机制解耦了输入图像分辨率与全连接层参数维度的强绑定关系，增强了架构的输入兼容性。
-        self.avgpool = nn.AdaptiveAvgPool2d((4, 4))
+        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
 
         # 全局线性映射
         # 展平维度: 256通道 × 4宽 × 4高 = 4096
-        self.fc = nn.Linear(256 * 4 * 4, num_classes)
+        self.fc = nn.Linear(256 * 1 * 1, num_classes)
 
     def _make_layer(self, out_channels: int, num_blocks: int, stride: int) -> nn.Sequential:
         """层级构建工厂函数"""
@@ -431,7 +433,9 @@ class ResNet(nn.Module):
         in_channels = self.in_channels
         for s in strides:
             layers.append(ResidualBlock(in_channels, out_channels, s))
-            in_channels = out_channels  # 仅在当前循环内有效，避免污染 self.in_channels
+            in_channels = out_channels
+        # 更新实例变量，确保下一层能正确接收当前层的输出通道数
+        self.in_channels = out_channels
         return nn.Sequential(*layers)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:

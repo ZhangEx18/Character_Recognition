@@ -32,7 +32,7 @@ import matplotlib
 matplotlib.use('Agg')
 
 # 导入本地项目核心组件
-from .model import DetailedCNN, SimpleCNN, ResNet
+from .models import create_model, MODEL_REGISTRY
 from .dataset import CLASS_IDX_TO_NAME, CLASS_NAME_TO_IDX, NUM_CLASSES
 from .utils import get_device
 
@@ -98,13 +98,8 @@ class Predictor:
     def _load_model(self, model_path: str) -> nn.Module:
         """根据指定的网络类型，实例化正确的锁芯并插入权重钥匙"""
 
-        # 1. 动态路由：根据 net_type 实例化空壳模型
-        if self.net_type == 'simple':
-            model = SimpleCNN(num_classes=NUM_CLASSES)
-        elif self.net_type == 'resnet':
-            model = ResNet(num_classes=NUM_CLASSES)
-        else:
-            model = DetailedCNN(num_classes=NUM_CLASSES)
+        # 1. 使用模型注册表动态创建实例
+        model = create_model(self.net_type, num_classes=NUM_CLASSES)
 
         # 2. 将空壳模型发送至计算硬件 (Mac MPS 或 GPU)
         model = model.to(self.device)
@@ -256,7 +251,7 @@ def main():
     parser.add_argument('--image', '-i', type=str, help='单图诊断模式：输入一张图片的绝对或相对路径')
     parser.add_argument('--dir', '-d', type=str, help='文件夹扫荡模式：输入一个文件夹路径，自动提取图片并批量预测')
     parser.add_argument('--interactive', action='store_true', help='互动模式：开启终端文字聊天式的连续推断')
-    parser.add_argument('--net', type=str, default='detailed', choices=['simple', 'detailed', 'resnet'], help='指定模型大脑的架构类型')
+    parser.add_argument('--net', type=str, default='detailed', choices=list(MODEL_REGISTRY.keys()), help='指定模型大脑的架构类型')
     parser.add_argument('--output', '-o', type=str, default=f'outputs/result_{timestamp}.png', help='生成的分析图表保存位置')
 
     args = parser.parse_args()

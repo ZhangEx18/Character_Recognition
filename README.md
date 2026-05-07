@@ -1,211 +1,124 @@
-# CNN 字符识别系统全景技术解析 (Character Recognition System)
+# Character Recognition - 多架构神经网络字符识别平台
 
-> **基于深度卷积神经网络的多类字符识别流水线**
+> **基于 PyTorch 的全栈字符识别系统，支持 8 种神经网络架构**
 
-本工程实现了一个基于 PyTorch 框架的高性能字符识别系统，支持对 **62 类字符（0-9, a-z, A-Z）** 的自动化识别与实时摄像头推理。系统在底层针对 Apple Silicon (M-series) 芯片进行了 Metal Performance Shaders (MPS) 计算后端的深度优化，同时完美兼容 CUDA 与 CPU 环境。
+本项目整合多个神经网络实现，统一适配 **62 类字符（0-9, a-z, A-Z）** 识别任务，提供 FastAPI 后端 + Streamlit 前端的全栈体验。针对 Apple Silicon (MPS)、CUDA 和 CPU 进行了跨平台优化。
 
-## 一、 神经网络架构机理 (Architectural Foundations)
+---
 
-本项目内置了三套阶梯式网络架构（`SimpleCNN`, `DetailedCNN`, `ResNet`），其核心数学与物理机理如下：
+## 支持的神经网络架构
 
-- **卷积层 (Spatial Feature Extraction)**
+| 架构 | 类型 | 特点 |
+|------|------|------|
+| **SimpleCNN** | 卷积网络 | 2层卷积 + 2层FC，参数量最小，快速验证首选 |
+| **DetailedCNN** | 卷积网络 | 3层卷积 + BN + Dropout，生产环境默认推荐 |
+| **ResNet** | 残差网络 | 4-stage 轻量残差，32→256通道，深层特征提取 |
+| **SE-ResNet** | 残差网络 | ResNet + SE-Block 通道注意力，增强难例区分 |
+| **MLPNet** | 全连接网络 | 纯FC无卷积，4096→512→256→62，baseline对比 |
+| **CifarCNN** | 卷积网络 | CIFAR风格双块池化，适合小数据集快速实验 |
+| **ResNet-18** | 残差网络 | 标准ResNet-18，4-stage 64→512通道 |
+| **ResNet-20** | 残差网络 | 轻量3-stage，16→64通道，参数量极小 |
 
-  通过离散卷积运算提取图像的局部边缘与纹理特征。其核心公式为：
+---
 
-  $$(f * g)(i, j) = \sum_m \sum_n f(m, n) \cdot g(i-m, j-n)$$
+## 项目结构
 
-  其中 $f$ 为输入图像，$g$ 为卷积核（Kernel）。卷积运算具备局部感知（Local Receptive Fields）与权值共享（Weight Sharing）特性，极大减少了参数量并实现了平移不变性。
-
-- **非线性激活 (ReLU)**
-
-  引入非线性映射 $f(x) = \max(0, x)$ 打破线性变换的局限。ReLU 能够诱导神经元的稀疏激活性，并在反向传播中通过保持梯度恒定，有效缓解深层网络的梯度消失问题。
-
-- **池化层 (Downsampling)**
-
-  采用最大池化（Max Pooling）技术降低特征图的空间维度，从而减少计算开销，并增强模型对于输入图像微小位移或形变的鲁棒性。
-
-------
-
-## 二、 神经网络拓扑结构与动态调度引擎深度剖析（以 SimpleCNN 为例）
-
-### 1. 神经网络拓扑结构构建 (Architecture Topology)
-
-神经网络的构建本质上是定义一系列可微分的数学张量变换层。在 SimpleCNN 中，模型被严格划分为“特征提取管线”和“全局分类器”两大核心组件。
-
-#### A. CNN 架构完整数据流 (SimpleCNN 张量推演)
-
-```text
-输入图像 (1×64×64)
-       ↓
-┌──────────────────────────────────────────────────────────────────────┐
-│  第一阶段：特征提取（卷积层 + 激活函数 + 池化层）                      │
-│                                                                      │
-│  卷积层：用卷积核扫描图像，提取局部特征（边缘、纹理、形状等）          │
-│  激活函数：引入非线性，让网络能学习复杂模式（ReLU：负值变0，正值不变） │
-│  池化层：缩小特征图尺寸，保留主要特征，减少计算量                     │
-│                                                                      │
-│  Conv1 → ReLU → Pool: (1,64,64) → (32,64,64) → (32,32,32)            │
-│  Conv2 → ReLU → Pool: (32,32,32) → (64,32,32) → (64,16,16)           │
-└──────────────────────────────────────────────────────────────────────┘
-       ↓
-┌──────────────────────────────────────────────────────────────────────┐
-│  第二阶段：空间展平                                                  │
-│                                                                      │
-│  将多维特征图"拉直"成一维向量，以便输入全连接层                       │
-│  (64,16,16) → (16384,)                                               │
-└──────────────────────────────────────────────────────────────────────┘
-       ↓
-┌──────────────────────────────────────────────────────────────────────┐
-│  第三阶段：分类识别（全连接层）                                      │
-│                                                                      │
-│  FC1：特征组合与降维，提取高级语义特征                               │
-│  FC2：输出层，每个神经元对应一个类别的得分                           │
-│                                                                      │
-│  FC1 + ReLU: (16384,) → (512,)                                       │
-│  FC2: (512,) → (62,)  ← 62个类别（0-9, a-z, A-Z）                    │
-└──────────────────────────────────────────────────────────────────────┘
-       ↓
-输出结果：62个类别的概率分布 (Logits)
 ```
-
-#### B. 核心网络层工程学说明
-
-- **二维卷积层 (Conv2d)**：
-  - **机制**：使用 3x3 的卷积核（Kernel）在特征图上滑动，计算局部点积。
-  - **作用**：底层卷积提取基础边缘，深层卷积提取复杂的字母拓扑结构。参数 `padding=1` 确保卷积运算不会导致空间分辨率过早收缩（如 64x64 卷积后仍为 64x64）。
-- **非线性激活 (ReLU)**：
-  - **机制**：执行 $f(x) = \max(0, x)$。
-  - **作用**：掐断所有负向激活值，引入非线性空间映射能力。如果没有它，无论叠加多少层网络，本质上仍然只是一个线性回归模型。
-- **空间下采样 (MaxPool2d)**：
-  - **机制**：使用 2x2 的窗口提取局部最大响应值。
-  - **作用**：执行空间维度的降采样。不仅将长宽各砍一半（成倍削减进入全连接层的参数量），还赋予了模型对字符轻微偏移、扭曲的平移不变性（Translation Invariance）。
-- **张量展平与线性映射 (Flatten & Linear)**：
-  - **机制**：将 `(64, 16, 16)` 的三维空间张量强行拉直为一维的 `16384` 长度特征向量。随后执行仿射变换 $y = xA^T + b$。
-  - **作用**：打破空间拓扑关系，将海量局部特征压缩到 512 维的隐层空间，并最终投影到 62 维的类别空间。
-
-### 2. 动态训练调度引擎 (Training Pipeline)
-
-构建好静态的计算图后，需要通过训练流水线（`train.py`）让血液（数据）流动起来，并利用优化算法不断重塑网络的权重。
-
-- **前向传播 (Forward Pass)**：模型处于 `model.train()` 状态。数据加载器吐出形状为 `[Batch, 1, 64, 64]` 的张量批次。张量按照网络定义的顺序依次穿透特征提取器和分类器，最终输出 `[Batch, 62]` 的对数几率。
-- **损失量化 (Loss Computation)**：使用带标签平滑的交叉熵损失函数。将模型输出与真实的整型标签（如 `10` 代表小写字母 'a'）进行比对。标签平滑会将绝对的独热编码软化，防止模型在训练后期产生过度自信，提升泛化性能。
-- **反向传播与优化 (Backward Pass)**：这是模型真正“学习”的时刻。自动求导引擎基于链式法则，从损失函数逆向回推计算梯度。随后，AdamW 优化器根据梯度方向微调模型内部的权重矩阵。
-- **动态学习率干预 (LR Scheduling)**：调度器时刻注视着验证集的 Loss 曲线。一旦发现 Loss 连续 5 个 Epoch 拒绝下降，会强行将学习率削减一半（乘以 0.5），迫使优化器缩小搜索步长进行精细收敛寻优。
-- **状态持久化 (Checkpointing)**：如果在严格隔离的无梯度验证集上跑出了历史最高准确率，系统会立刻触发 I/O 操作，将当前模型的权重矩阵连同优化器的动量状态一起持久化写入 `.pth` 快照文件中。
-
-------
-
-## 三、 项目目录结构与工程解耦 (Project Hierarchy)
-
-本项目采用高度解耦的模块化设计，业务逻辑与底层工具严格分离：
-
-```markdown
 Character_Recognition/
-├── .tmp/                    # 运行时生成的 HTML 单文件应用 (Git Ignore)
-├── venv/                    # 虚拟环境隔离目录 (Git Ignore)
-├── data/                    # 数据管理层
-│   ├── raw/                # 原始数据集 (Raw Assets)
-│   └── processed/          # 归一化后的 64x64 灰度标准数据集
-├── checkpoints/             # 训练快照存档 (包含模型权重及优化器断点状态)
-├── logs/                   # TensorBoard 训练监控日志
-├── outputs/                 # 推理分析结果与深度诊断报告图表
-├── src/                     # 核心算法包 (Algorithm Core)
-│   ├── __init__.py         # 模块暴露接口与包管理实现
-│   ├── model.py            # CNN 架构库 (SimpleCNN / DetailedCNN / ResNet)
-│   ├── dataset.py          # 数据装载、全量内存缓存与增强流水线
-│   ├── inference.py        # 静态推理引擎 (支持批量预测与Top-K分析)
-│   └── utils.py            # 尺寸推演、可视化绘图与跨平台硬件调度
-├── tools/                   # 辅助应用工具
-│   ├── camera_app.py       # 实时 OpenCV 视频流监控应用
-│   ├── eval_matrix.py      # 模型期末考试：生成混淆矩阵与软肋排行榜
-│   └── preprocess.py       # 增量式图像清洗与切分脚本
-├── backend.py               # FastAPI 后端 (提供推理与训练 API)
-├── frontend.py              # 前端单文件 SPA 生成器 + HTTP 服务器
-├── train.py                 # 训练调度主入口 (Master Entry)
-├── requirements.txt         # 环境依赖 BOM 清单
-└── README.md                # 技术说明文档
+├── backend.py               # FastAPI 后端（推理 + 训练 API）
+├── frontend.py              # 前端 SPA（Neural Dark 主题）
+├── train.py                 # 训练入口（支持所有架构）
+├── requirements.txt         # 依赖清单
+├── src/                     # 核心源码
+│   ├── __init__.py
+│   ├── models/              # 神经网络架构库
+│   │   ├── __init__.py      # 模型注册表 + create_model 工厂
+│   │   ├── simple_cnn.py
+│   │   ├── detailed_cnn.py
+│   │   ├── resnet.py        # ResNet + ResNet18 + ResNet20
+│   │   ├── seresnet.py      # SE-ResNet + SE-Block
+│   │   ├── mlp_net.py       # 全连接网络
+│   │   ├── cifar_cnn.py     # CIFAR风格CNN
+│   │   └── base.py          # 通用工具函数
+│   ├── model.py             # FocalLoss（保留）
+│   ├── dataset.py           # 数据加载与增强
+│   ├── inference.py         # 推理引擎（Predictor）
+│   └── utils.py             # 可视化 + 硬件调度
+├── tools/                   # 辅助工具
+│   ├── camera_app.py        # 实时摄像头推理
+│   ├── eval_matrix.py       # 混淆矩阵与弱点分析
+│   └── preprocess.py        # 数据预处理
+├── data/                    # 数据集（train/val/test）
+├── checkpoints/             # 模型权重存档
+├── logs/                    # TensorBoard 日志
+└── outputs/                 # 推理结果与诊断图表
 ```
 
-------
+---
 
-## 四、 快速启动与部署 (Deployment Workflow)
+## 快速启动
 
-### 1. 环境初始化
-
-克隆本仓库后，请在虚拟环境中安装核心依赖：
+### 1. 安装依赖
 
 ```bash
-python -m pip install -r requirements.txt
+pip install -r requirements.txt
 ```
 
-### 2. 启动前后端服务
+### 2. 启动服务
 
-本项目采用现代化的前后端分离架构：
-
-```Bash
-# 终端 1：启动 FastAPI 后端 (端口 8000)
+```bash
+# 终端 1：启动 FastAPI 后端（端口 8000）
 python backend.py
 
-# 终端 2：启动前端 HTTP 服务器 (端口 8501)
+# 终端 2：启动前端（端口 8501）
 python frontend.py
-# 访问 http://127.0.0.1:8501/ 查看 Neural Dark 主题界面
+# 访问 http://127.0.0.1:8501/
 ```
 
 ### 3. 模型训练
 
-系统将自动探测并启用当前机器的最强算力（MPS/CUDA）。可通过 Web 界面或 `--net` 参数自由切换底层架构模型：
+```bash
+# 默认使用 DetailedCNN
+python train.py
 
-```Bash
-# 直接使用命令行训练 (默认使用 detailed 架构)
-python train.py --net resnet
+# 指定其他架构
+python train.py --net resnet18
+python train.py --net seresnet
+python train.py --net mlp
 
-# 开启 TensorBoard 监控大屏 (另起一个终端运行)
+# 查看所有可用架构
+python train.py --net  # 会提示可用选项
+
+# TensorBoard 监控
 tensorboard --logdir=logs
 ```
 
-### 4. 实战推理模式
+### 4. 推理
 
-提供”静态诊断”与”实时视频流”两种实战模式：
+```bash
+# 命令行推理
+python -m src.inference --image data/test.png --net resnet18
 
-```Bash
-# 模式 A：启动 iPhone / WebCam 实时视频流字符识别
-python -m tools.camera_app --net resnet
-
-# 模式 B：终端静态图像深度分析 (带 Top-K 概率图表输出)
-python -m src.inference --image data/test.png --net resnet
+# 实时摄像头
+python -m tools.camera_app --net detailed
 ```
 
-------
+---
 
-## 五、 Neural Dark 前端界面 (Neural Dark UI)
+## 技术特性
 
-本项目配备现代化深色主题单文件应用（SPA），具备以下特性：
+- **8 种神经网络架构**：从简单 MLP 到深层 ResNet，覆盖不同复杂度需求
+- **统一接口**：所有模型通过 `create_model(name, num_classes=62)` 一键创建
+- **全栈架构**：FastAPI 后端 + 现代化前端，支持训练监控与实时推理
+- **数据增强**：RandomRotation、Affine、Perspective、ElasticTransform、RandomErasing
+- **硬件自适应**：自动检测 MPS / CUDA / CPU
+- **训练可视化**：TensorBoard + 前端实时曲线
 
-- **Neural Dark 主题**：深邃的神经网络风格配色，带有 Canvas 粒子动画背景
-- **实时训练可视化**：Chart.js 实时绘制训练损失/准确率曲线
-- **模型选择器**：下拉菜单式设计，支持 SimpleCNN / DetailedCNN / ResNet 架构切换
-- **异步训练控制**：通过 FastAPI 后端实现启动/停止/监控训练任务
-- **图片推理**：拖拽或选择图片，实时获取 Top-5 预测结果及置信度
+---
 
-界面入口：`python frontend.py` → http://127.0.0.1:8501/
+## 未来方向
 
-------
-
-## 六、 性能诊断与可视化 (Diagnostics)
-
-通过运行 `python -m tools.eval_matrix --net resnet`，系统会在 `outputs/` 目录中生成深度诊断报告，协助您评估模型的真实泛化能力：
-
-- **全景混淆矩阵 (Confusion Matrix)**：量化跨类别分类误差，精准定位语义相近字符（如数字 `0` vs 大写字母 `O`，数字 `1` vs 小写字母 `l`）的区分度。
-- **最易错软肋排行榜 (Weakness Top-K)**：自动提取矩阵中错误率最高的前 15 个字符对，并绘制直观的条形图，指导后续的针对性数据增强。
-- **特征图可视化 (Feature Maps)**：提取卷积层内部的激活值，像显微镜一样解析神经网络各阶段的注意力聚焦区域（*由 `utils.py` 提供支持*）。
-
-------
-
-## 七、 未来演进方向 (Future Directions)
-
-随着计算机视觉（CV）领域的快速发展，本项目已预留良好的扩展接口，未来可作为以下前沿技术的基准测试床：
-
-- **视觉 Transformer (ViT)**：引入自注意力机制（Self-Attention），突破卷积层局部感受野的先天限制，实现全局上下文建模。
-- **多模态对齐 (CLIP)**：探索图像特征与自然语言文本的联合表征，迈向开放域（Open-vocabulary）的零样本（Zero-shot）字符识别。
-- **模型量化与蒸馏 (TinyML)**：通过 INT8 极低精度量化或知识蒸馏（Knowledge Distillation）压缩网络参数，以适配算力严苛的嵌入式设备与边缘侧计算场景。
-- **序列建模集成 (OCR)**：结合长短期记忆网络（LSTM）或 Transformer 解码器，将单字符识别升级为对连续手写单词/句子的端到端识别。
+- Vision Transformer (ViT) 架构支持
+- 模型量化与知识蒸馏
+- ONNX 导出与边缘部署
+- 连续文本 OCR 序列建模

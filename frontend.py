@@ -144,7 +144,7 @@ HTML_CONTENT = """<!DOCTYPE html>
   .drop-zone-text strong { color: var(--accent-blue); }
   .drop-zone-hint { font-size: 0.75rem; color: var(--text-muted); margin-top: 0.5rem; font-family: var(--font-mono); }
   #preview-img { max-width: 100%; max-height: 260px; border-radius: var(--radius-md); display: none; margin: 1rem auto; box-shadow: 0 4px 20px rgba(0,0,0,0.4); }
-  .model-selector { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.75rem; margin-bottom: 1.25rem; }
+  .model-selector { display: grid; grid-template-columns: repeat(5, 1fr); gap: 0.75rem; margin-bottom: 1.25rem; }
   .model-option {
     border: 1px solid var(--border); border-radius: var(--radius-md);
     padding: 0.85rem 0.75rem; cursor: pointer;
@@ -154,7 +154,7 @@ HTML_CONTENT = """<!DOCTYPE html>
   .model-option.selected { border-color: var(--accent-blue); background: rgba(56, 189, 248, 0.1); box-shadow: var(--glow-blue); }
   .model-option-name { font-size: 0.85rem; font-weight: 700; color: var(--text-primary); }
   .model-option-params { font-size: 0.7rem; color: var(--text-muted); font-family: var(--font-mono); margin-top: 0.25rem; }
-  .model-selector { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.75rem; }
+  .model-selector { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.75rem; }
   .model-option { min-width: 0; }
   .form-select {
     width: 100%; padding: 0.6rem 0.85rem;
@@ -330,9 +330,14 @@ HTML_CONTENT = """<!DOCTYPE html>
           </div>
           <div class="control-label">选择模型架构</div>
           <select class="form-select" id="inf-model-select">
-            <option value="detailed" selected>DetailedCNN (4.32M 参数)</option>
-            <option value="simple">SimpleCNN (8.44M 参数)</option>
-            <option value="resnet">ResNet (3.05M 参数)</option>
+            <option value="detailed" selected>DetailedCNN (生产推荐)</option>
+            <option value="simple">SimpleCNN (快速验证)</option>
+            <option value="lenet">LeNet-5 (CNN始祖)</option>
+            <option value="vgg">VGG (小卷积堆叠)</option>
+            <option value="resnet">ResNet (残差网络)</option>
+            <option value="seresnet">SE-ResNet (通道注意力)</option>
+            <option value="mobilenet">MobileNet (轻量高效)</option>
+            <option value="mlp">MLPNet (全连接基线)</option>
           </select>
           <div class="drop-zone" id="drop-zone">
             <div class="drop-zone-icon">
@@ -411,9 +416,14 @@ HTML_CONTENT = """<!DOCTYPE html>
           <div class="control-group">
             <label class="control-label">模型架构</label>
             <select class="form-select" id="train-model-select">
-              <option value="detailed">DetailedCNN (4.32M 参数)</option>
-              <option value="simple">SimpleCNN (8.44M 参数)</option>
-              <option value="resnet">ResNet (3.05M 参数)</option>
+              <option value="detailed">DetailedCNN (生产推荐)</option>
+              <option value="simple">SimpleCNN (快速验证)</option>
+              <option value="lenet">LeNet-5 (CNN始祖)</option>
+              <option value="vgg">VGG (小卷积堆叠)</option>
+              <option value="resnet">ResNet (残差网络)</option>
+              <option value="seresnet">SE-ResNet (通道注意力)</option>
+              <option value="mobilenet">MobileNet (轻量高效)</option>
+              <option value="mlp">MLPNet (全连接基线)</option>
             </select>
           </div>
           <hr class="divider">

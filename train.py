@@ -74,7 +74,8 @@ from torch.utils.tensorboard import SummaryWriter
 # ============================================================
 # 架构组件导入
 # ============================================================
-from src import DetailedCNN, SimpleCNN, ResNet, SEResNet, FocalLoss, count_parameters, create_dataloaders, get_device
+from src import FocalLoss, count_parameters, create_dataloaders, get_device
+from src.models import create_model, MODEL_REGISTRY, list_models
 
 # ============================================================
 # 核心辅助函数：模型前向与反向传播逻辑
@@ -86,7 +87,8 @@ def train_one_epoch(
     train_loader: DataLoader,
     optimizer: optim.Optimizer,
     criterion: nn.Module,
-    epoch: int
+    epoch: int,
+    scheduler: optim.lr_scheduler.OneCycleLR = None
 ) -> Tuple[float, float]:
     """
     执行单个 Epoch (全量训练数据完整遍历一次) 的训练迭代。
@@ -123,6 +125,10 @@ def train_one_epoch(
 
         # 步骤 5：参数更新 (Optimization step)。优化算法基于当前梯度调整网络权重。
         optimizer.step()
+
+        # OneCycleLR：每个 batch 后更新学习率（必须）
+        if scheduler is not None:
+            scheduler.step()
 
         # 统计批次误差以进行宏观监控
         running_loss += loss.item()
@@ -247,20 +253,11 @@ def train(
     )
 
     # 4. 根据输入配置实例化指定的网络拓扑结构
-    if net_type == 'simple':
-        model = SimpleCNN(num_classes=62).to(device)
-        print("🔧 拓扑实例化完成: SimpleCNN (基准级网络)")
-    elif net_type == 'detailed':
-        model = DetailedCNN(num_classes=62).to(device)
-        print("⚙️ 拓扑实例化完成: DetailedCNN (引入 BatchNorm 等稳健性结构)")
-    elif net_type == 'resnet':
-        model = ResNet(num_classes=62).to(device)
-        print("🧠 拓扑实例化完成: ResNet (深层残差架构)")
-    elif net_type == 'seresnet':
-        model = SEResNet(num_classes=62).to(device)
-        print("🎯 拓扑实例化完成: SEResNet (带 SE-Block 注意力机制的残差网络)")
-    else:
-        raise ValueError(f"不受支持的网络架构类型: {net_type}")
+    model = create_model(net_type, num_classes=62).to(device)
+    print(f"🧠 拓扑实例化完成: {net_type.upper()}")
+    desc = list_models().get(net_type, "")
+    if desc:
+        print(f"   描述: {desc}")
 
     print(f"📊 当前模型可训练参数总量: {count_parameters(model):,}")
 
@@ -278,11 +275,19 @@ def train(
     # 优化器配置：采用 AdamW 算法，附加 weight_decay=1e-4 的 L2 正则化项以抑制权重过载膨胀。
     optimizer = optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-4)
 
-    # 动态学习率调度策略：采用余弦退火热重启 (Cosine Annealing with Warm Restarts)。
-    # 学习率会平滑地从初始值下降到极低值，然后突然重启回升。
-    # 这种"海浪式"退火机制能把模型从局部最优的"烂泥潭"里踹出去，帮其找到更好的全局最优解。
-    # T_0=10 表示每 10 个 epoch 完成一个退火周期，T_mult=2 表示后续周期长度翻倍。
-    scheduler = CosineAnnealingWarmRestarts(optimizer, T_0=10, T_mult=2)
+    # 动态学习率调度策略：采用 OneCycleLR 单周期学习率调度。
+    # 特点：前半段学习率从低到高(热身)，后半段从高到低(余弦退火)
+    # 相比 CosineAnnealingWarmRestarts，OneCycleLR 在 30-50 epoch 内通常表现更优
+    scheduler = optim.lr_scheduler.OneCycleLR(
+        optimizer,
+        max_lr=learning_rate,
+        epochs=epochs,
+        steps_per_epoch=len(train_loader),
+        pct_start=0.1,      # 前 10% 用于热身
+        anneal_strategy='cos',
+        div_factor=25,      # 初始学习率 = max_lr/25
+        final_div_factor=1e4  # 最终学习率 = max_lr/10000
+    )
 
     start_epoch = 1
     best_acc = 0.0
@@ -292,7 +297,7 @@ def train(
         print(f"\n{'='*60}\nEpoch {epoch}/{epochs}\n{'='*60}")
 
         # 在训练数据分布上执行参数优化
-        t_loss, t_acc = train_one_epoch(model, device, train_loader, optimizer, criterion, epoch)
+        t_loss, t_acc = train_one_epoch(model, device, train_loader, optimizer, criterion, epoch, scheduler)
 
         # 在同源但相互隔离的验证集上进行泛化误差评估
         v_loss, v_acc = validate(model, device, val_loader, criterion)
@@ -306,9 +311,6 @@ def train(
         writer.add_scalar('Learning_rate', optimizer.param_groups[0]['lr'], epoch)
 
         print(f"\n周期摘要: Train Acc {t_acc:.2f}% | Val Acc {v_acc:.2f}% | LR {optimizer.param_groups[0]['lr']:.6f}")
-
-        # 调度器执行余弦退火调度：按 epoch 周期自动调整学习率
-        scheduler.step()
 
         # 7. 模型检查点保存策略
         # 判断当前轮次验证准确率是否突破历史阈值上限，若是，则执行状态缓存
@@ -346,8 +348,8 @@ def main():
         '--net',
         type=str,
         default='detailed',
-        choices=['simple', 'detailed', 'resnet', 'seresnet'],
-        help='指定实例化的网络架构类别: simple, detailed, resnet, 或 seresnet (带注意力机制)'
+        choices=list(MODEL_REGISTRY.keys()),
+        help=f'指定网络架构: {", ".join(MODEL_REGISTRY.keys())}'
     )
     parser.add_argument(
         '--loss',
@@ -366,7 +368,7 @@ def main():
         'net_type': args.net,
         'loss_type': args.loss,
         'data_dir': os.path.join(base_dir, 'data', 'processed'),
-        'epochs': 30,
+        'epochs': 60,
         'batch_size': 128,
         'learning_rate': 0.001,
         'image_size': 64,

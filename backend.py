@@ -33,7 +33,8 @@ from torch.utils.data import DataLoader
 import torchvision.transforms as transforms
 
 # 导入模型和数据加载
-from src import DetailedCNN, SimpleCNN, ResNet, count_parameters, create_dataloaders, get_device
+from src import count_parameters, create_dataloaders, get_device
+from src.models import create_model, MODEL_REGISTRY
 
 # ============================================================
 # 应用初始化
@@ -94,8 +95,16 @@ inference_transform = transforms.Compose([
     transforms.Normalize(mean=[0.5], std=[0.5]),
 ])
 
-# 类别映射
-char_map = {i: SimpleCNN.get_class_name(i) for i in range(62)}
+# 类别映射 (0-9: 数字, 10-35: 大写字母, 36-61: 小写字母)
+def _get_class_name(idx: int) -> str:
+    if idx < 10:
+        return str(idx)
+    elif idx < 36:
+        return chr(ord('A') + idx - 10)
+    else:
+        return chr(ord('a') + idx - 36)
+
+char_map = {i: _get_class_name(i) for i in range(62)}
 
 # ============================================================
 # 模型单例（延迟加载）
@@ -103,12 +112,13 @@ char_map = {i: SimpleCNN.get_class_name(i) for i in range(62)}
 _model_cache: dict = {}
 
 
-def _get_model() -> nn.Module:
+def _get_model(net_type: str = "detailed") -> nn.Module:
     """获取推理用模型，始终使用 best_model.pth"""
-    if "inference" in _model_cache:
-        return _model_cache["inference"]
+    cache_key = f"inference_{net_type}"
+    if cache_key in _model_cache:
+        return _model_cache[cache_key]
 
-    model = DetailedCNN(num_classes=62)
+    model = create_model(net_type, num_classes=62)
 
     base_dir = os.path.dirname(os.path.abspath(__file__))
     checkpoint_path = os.path.join(base_dir, "checkpoints", "best_model.pth")
@@ -121,7 +131,7 @@ def _get_model() -> nn.Module:
             print(f"[Model] checkpoint 与 {net_type} 不匹配，跳过加载，使用随机权重: {e}")
 
     model.eval()
-    _model_cache["inference"] = model
+    _model_cache[cache_key] = model
     return model
 
 
@@ -129,8 +139,18 @@ def _get_model() -> nn.Module:
 # 推理接口
 # ============================================================
 @app.post("/predict/")
-async def make_prediction(file: UploadFile = File(...)):
-    """图片推理接口 - 始终使用 best_model.pth"""
+async def make_prediction(
+    file: UploadFile = File(...),
+    net_type: str = "detailed"
+):
+    """图片推理接口 - 使用 best_model.pth"""
+    # 验证模型类型
+    if net_type not in MODEL_REGISTRY:
+        raise HTTPException(
+            status_code=400,
+            detail=f"不支持的模型类型: {net_type}。可用: {list(MODEL_REGISTRY.keys())}"
+        )
+
     image_bytes = await file.read()
 
     try:
@@ -140,7 +160,7 @@ async def make_prediction(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail=f"无法解析图像: {e}")
 
     device = get_device()
-    model = _get_model().to(device)
+    model = _get_model(net_type).to(device)
     tensor = tensor.to(device)
 
     with torch.no_grad():
@@ -180,8 +200,8 @@ async def start_training(
         raise HTTPException(status_code=400, detail="训练已在进行中")
 
     # 验证模型类型
-    if net_type not in ["simple", "detailed", "resnet"]:
-        raise HTTPException(status_code=400, detail=f"不支持的模型类型: {net_type}")
+    if net_type not in MODEL_REGISTRY:
+        raise HTTPException(status_code=400, detail=f"不支持的模型类型: {net_type}。可用: {list(MODEL_REGISTRY.keys())}")
 
     # 重置训练状态
     with training_lock:
@@ -243,12 +263,8 @@ def _train_model(
         )
 
         # 创建模型
-        if net_type == "simple":
-            model = SimpleCNN(num_classes=62).to(device)
-        elif net_type == "detailed":
-            model = DetailedCNN(num_classes=62).to(device)
-        else:  # resnet
-            model = ResNet(num_classes=62).to(device)
+        model = create_model(net_type, num_classes=62).to(device)
+        print(f"[训练] 模型: {net_type} | 参数量: {count_parameters(model):,}")
 
         criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
         optimizer = optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-4)
